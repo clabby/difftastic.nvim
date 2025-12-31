@@ -124,16 +124,8 @@ fn jj_to_git_commit(revset: &str) -> Option<String> {
 /// Gets diff stats from jj by translating revsets to git commits.
 /// For colocated repos, uses `git diff --numstat` for accurate stats.
 fn jj_diff_stats(revset: &str) -> FileStats {
-    let (old_commit, new_commit) = if let Some((left, right)) = revset.split_once("..") {
-        // Range like "trunk()..@": diff between endpoints
-        (jj_to_git_commit(left), jj_to_git_commit(right))
-    } else {
-        // Single revision like "@": diff against parent
-        (
-            jj_to_git_commit(&format!("{revset}-")),
-            jj_to_git_commit(revset),
-        )
-    };
+    let old_commit = jj_to_git_commit(&format!("roots({revset})-"));
+    let new_commit = jj_to_git_commit(&format!("heads({revset})"));
 
     match (old_commit, new_commit) {
         (Some(old), Some(new)) => git_diff_stats(&format!("{old}..{new}")),
@@ -180,12 +172,12 @@ fn run_git_diff(commit_range: &str) -> Result<Vec<difftastic::DifftFile>, String
         .map_err(|e| format!("Failed to parse difftastic JSON: {e}"))
 }
 
-/// Parses a commit range into `(old_commit, new_commit)` references.
+/// Parses a git commit range into `(old_commit, new_commit)` references.
 ///
 /// Handles single commits (appends `parent_suffix` for parent) and
-/// ranges like `"main..feature"`.
+/// ranges like `"main..feature"`. Only used for git, not jj.
 #[inline]
-fn parse_range(range: &str, parent_suffix: &str) -> (String, String) {
+fn parse_git_range(range: &str, parent_suffix: &str) -> (String, String) {
     if let Some((old, new)) = range.split_once("..") {
         (old.to_string(), new.to_string())
     } else {
@@ -211,7 +203,7 @@ fn run_diff(lua: &Lua, (range, vcs): (String, String)) -> LuaResult<LuaTable> {
     };
 
     let display_files: Vec<_> = if vcs == "git" {
-        let (old_ref, new_ref) = parse_range(&range, "^");
+        let (old_ref, new_ref) = parse_git_range(&range, "^");
         files
             .into_par_iter()
             .map(|file| {
@@ -222,7 +214,8 @@ fn run_diff(lua: &Lua, (range, vcs): (String, String)) -> LuaResult<LuaTable> {
             })
             .collect()
     } else {
-        let (old_ref, new_ref) = parse_range(&range, "-");
+        let old_ref = format!("roots({range})-");
+        let new_ref = format!("heads({range})");
         files
             .into_par_iter()
             .map(|file| {
@@ -278,29 +271,22 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_range_single_commit_git() {
-        let (old, new) = parse_range("abc123", "^");
+    fn test_parse_git_range_single_commit() {
+        let (old, new) = parse_git_range("abc123", "^");
         assert_eq!(old, "abc123^");
         assert_eq!(new, "abc123");
     }
 
     #[test]
-    fn test_parse_range_single_revision_jj() {
-        let (old, new) = parse_range("@", "-");
-        assert_eq!(old, "@-");
-        assert_eq!(new, "@");
-    }
-
-    #[test]
-    fn test_parse_range_commit_range() {
-        let (old, new) = parse_range("main..feature", "^");
+    fn test_parse_git_range_commit_range() {
+        let (old, new) = parse_git_range("main..feature", "^");
         assert_eq!(old, "main");
         assert_eq!(new, "feature");
     }
 
     #[test]
-    fn test_parse_range_empty_left() {
-        let (old, new) = parse_range("..HEAD", "^");
+    fn test_parse_git_range_empty_left() {
+        let (old, new) = parse_git_range("..HEAD", "^");
         assert_eq!(old, "");
         assert_eq!(new, "HEAD");
     }
