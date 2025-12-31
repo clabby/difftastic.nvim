@@ -172,16 +172,28 @@ fn run_git_diff(commit_range: &str) -> Result<Vec<difftastic::DifftFile>, String
         .map_err(|e| format!("Failed to parse difftastic JSON: {e}"))
 }
 
+/// Gets the merge-base of two git refs.
+fn git_merge_base(a: &str, b: &str) -> Option<String> {
+    Command::new("git")
+        .args(["merge-base", a, b])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
 /// Parses a git commit range into `(old_commit, new_commit)` references.
 ///
-/// Handles single commits (appends `parent_suffix` for parent) and
-/// ranges like `"main..feature"`. Only used for git, not jj.
+/// Handles single commits, `A..B` ranges, and `A...B` (merge-base) ranges.
 #[inline]
-fn parse_git_range(range: &str, parent_suffix: &str) -> (String, String) {
-    if let Some((old, new)) = range.split_once("..") {
+fn parse_git_range(range: &str) -> (String, String) {
+    if let Some((a, b)) = range.split_once("...") {
+        let base = git_merge_base(a, b).unwrap_or_else(|| format!("{a}^"));
+        (base, b.to_string())
+    } else if let Some((old, new)) = range.split_once("..") {
         (old.to_string(), new.to_string())
     } else {
-        (format!("{range}{parent_suffix}"), range.to_string())
+        (format!("{range}^"), range.to_string())
     }
 }
 
@@ -203,7 +215,7 @@ fn run_diff(lua: &Lua, (range, vcs): (String, String)) -> LuaResult<LuaTable> {
     };
 
     let display_files: Vec<_> = if vcs == "git" {
-        let (old_ref, new_ref) = parse_git_range(&range, "^");
+        let (old_ref, new_ref) = parse_git_range(&range);
         files
             .into_par_iter()
             .map(|file| {
@@ -272,21 +284,21 @@ mod tests {
 
     #[test]
     fn test_parse_git_range_single_commit() {
-        let (old, new) = parse_git_range("abc123", "^");
+        let (old, new) = parse_git_range("abc123");
         assert_eq!(old, "abc123^");
         assert_eq!(new, "abc123");
     }
 
     #[test]
-    fn test_parse_git_range_commit_range() {
-        let (old, new) = parse_git_range("main..feature", "^");
+    fn test_parse_git_range_double_dot() {
+        let (old, new) = parse_git_range("main..feature");
         assert_eq!(old, "main");
         assert_eq!(new, "feature");
     }
 
     #[test]
     fn test_parse_git_range_empty_left() {
-        let (old, new) = parse_git_range("..HEAD", "^");
+        let (old, new) = parse_git_range("..HEAD");
         assert_eq!(old, "");
         assert_eq!(new, "HEAD");
     }
