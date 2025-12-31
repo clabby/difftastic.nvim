@@ -136,8 +136,8 @@ Call the setup function with your options: >lua
             width = 40,
             icons = {
                 enable = true,
-                dir_open = "▼",
-                dir_closed = "▶",
+                dir_open = "",
+                dir_closed = "",
             },
         },
         highlights = {

@@ -27,8 +27,8 @@ M.config = {
         width = 40,
         icons = {
             enable = true,
-            dir_open = "▼",
-            dir_closed = "▶",
+            dir_open = "",
+            dir_closed = "",
         },
     },
 }

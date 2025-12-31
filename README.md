@@ -147,8 +147,8 @@ require("difftastic-nvim").setup({
         width = 40,
         icons = {
             enable = true,    -- use nvim-web-devicons if available
-            dir_open = "▼",
-            dir_closed = "▶",
+            dir_open = "",
+            dir_closed = "",
         },
     },
     highlights = {
