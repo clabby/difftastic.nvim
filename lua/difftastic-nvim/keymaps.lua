@@ -13,6 +13,7 @@ local function setup_diff_keymaps(buf, state)
     vim.keymap.set("n", keys.next_hunk, difft.next_hunk, { buffer = buf })
     vim.keymap.set("n", keys.prev_hunk, difft.prev_hunk, { buffer = buf })
     vim.keymap.set("n", keys.close, difft.close, { buffer = buf })
+    vim.keymap.set("n", keys.goto_file, difft.goto_file, { buffer = buf })
     vim.keymap.set("n", keys.focus_tree, function()
         if state.tree_win and vim.api.nvim_win_is_valid(state.tree_win) then
             vim.api.nvim_set_current_win(state.tree_win)

@@ -173,6 +173,12 @@ pub struct DisplayFile {
     ///
     /// Used for navigation commands like "jump to next hunk".
     pub hunk_starts: Vec<u32>,
+
+    /// Original line number mapping: `(left_line, right_line)` for each display row.
+    ///
+    /// `None` means filler line. Line numbers are 0-indexed into the source file.
+    /// Used for "goto file" navigation to jump from diff view to actual file location.
+    pub aligned_lines: Vec<(Option<u32>, Option<u32>)>,
 }
 
 /// Processes a difftastic file into display-ready format.
@@ -207,12 +213,18 @@ fn process_created(
     new_lines: Vec<String>,
     stats: Option<(u32, u32)>,
 ) -> DisplayFile {
+    let num_lines = new_lines.len();
     let rows: Vec<Row> = new_lines
         .into_iter()
         .map(|line| Row {
             left: Side::filler(),
             right: Side::with_full_highlight(line),
         })
+        .collect();
+
+    // For created files: left is always None, right maps 0..n
+    let aligned_lines: Vec<(Option<u32>, Option<u32>)> = (0..num_lines)
+        .map(|i| (None, Some(i as u32)))
         .collect();
 
     let (additions, deletions) = stats.unwrap_or((rows.len() as u32, 0));
@@ -226,6 +238,7 @@ fn process_created(
         deletions,
         rows,
         hunk_starts,
+        aligned_lines,
     }
 }
 
@@ -238,12 +251,18 @@ fn process_deleted(
     old_lines: Vec<String>,
     stats: Option<(u32, u32)>,
 ) -> DisplayFile {
+    let num_lines = old_lines.len();
     let rows: Vec<Row> = old_lines
         .into_iter()
         .map(|line| Row {
             left: Side::with_full_highlight(line),
             right: Side::filler(),
         })
+        .collect();
+
+    // For deleted files: left maps 0..n, right is always None
+    let aligned_lines: Vec<(Option<u32>, Option<u32>)> = (0..num_lines)
+        .map(|i| (Some(i as u32), None))
         .collect();
 
     let (additions, deletions) = stats.unwrap_or((0, rows.len() as u32));
@@ -257,6 +276,7 @@ fn process_deleted(
         deletions,
         rows,
         hunk_starts,
+        aligned_lines,
     }
 }
 
@@ -360,6 +380,7 @@ fn process_changed(
         deletions,
         rows,
         hunk_starts,
+        aligned_lines: file.aligned_lines,
     }
 }
 
@@ -516,6 +537,19 @@ impl IntoLua for DisplayFile {
         table.set("rows", lua.create_sequence_from(rows)?)?;
 
         table.set("hunk_starts", lua.create_sequence_from(self.hunk_starts)?)?;
+
+        // Serialize aligned_lines as array of [left, right] pairs (nil for None)
+        let aligned: Vec<LuaValue> = self
+            .aligned_lines
+            .into_iter()
+            .map(|(left, right)| {
+                let pair = lua.create_table()?;
+                pair.set(1, left)?;
+                pair.set(2, right)?;
+                Ok(LuaValue::Table(pair))
+            })
+            .collect::<LuaResult<_>>()?;
+        table.set("aligned_lines", lua.create_sequence_from(aligned)?)?;
 
         Ok(LuaValue::Table(table))
     }
