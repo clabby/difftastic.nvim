@@ -81,6 +81,8 @@ Requires a Rust toolchain. The plugin automatically builds from source on first 
 
 | Command | Description |
 |---------|-------------|
+| `:Difft` | Open diff view for unstaged changes (git) or uncommitted changes (jj) |
+| `:Difft --staged` | Open diff view for staged changes (git only) |
 | `:Difft <ref>` | Open diff view for a jj revset or git commit/range |
 | `:DifftClose` | Close the diff view |
 | `:DifftUpdate` | Update to latest release (requires `download = true`) |
@@ -88,6 +90,9 @@ Requires a Rust toolchain. The plugin automatically builds from source on first 
 ### Examples (jj)
 
 ```vim
+" Diff uncommitted changes (working copy vs @)
+:Difft
+
 " Diff the current change
 :Difft @
 
@@ -101,6 +106,12 @@ Requires a Rust toolchain. The plugin automatically builds from source on first 
 ### Examples (git)
 
 ```vim
+" Diff unstaged changes (working tree vs index)
+:Difft
+
+" Diff staged changes (index vs HEAD)
+:Difft --staged
+
 " Diff the last commit
 :Difft HEAD
 
@@ -123,7 +134,10 @@ All keybindings are buffer-local and configurable via `setup()`. Defaults:
 | `[c` | Previous hunk |
 | `<Tab>` | Toggle focus between file tree and diff |
 | `<CR>` | Open file under cursor (in file tree) |
+| `gf` | Go to file at cursor position (opens in previous tab or new tab) |
 | `q` | Close diff view |
+
+The `gf` keymap works from the right pane (new/working version) and jumps to the corresponding line and column in an editable buffer. If on a filler line, it jumps to the nearest non-filler line.
 
 Filler lines (`╱╱╱`) indicate where content exists on one side but not the other.
 
@@ -143,6 +157,7 @@ require("difftastic-nvim").setup({
         focus_tree = "<Tab>",
         focus_diff = "<Tab>",
         select = "<CR>",
+        goto_file = "gf",
     },
     tree = {
         width = 40,

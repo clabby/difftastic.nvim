@@ -892,4 +892,91 @@ mod tests {
         assert_eq!(result.hunk_starts[0], 1);
         assert_eq!(result.hunk_starts[1], 5);
     }
+
+    #[test]
+    fn aligned_lines_created_file() {
+        let file = DifftFile {
+            path: "new.rs".into(),
+            language: "Rust".into(),
+            status: Status::Created,
+            aligned_lines: vec![],
+            chunks: vec![],
+        };
+        let result = process_file(file, vec![], vec!["a".into(), "b".into(), "c".into()], None);
+
+        // Created files: left is always None, right maps 0..n
+        assert_eq!(result.aligned_lines.len(), 3);
+        assert_eq!(result.aligned_lines[0], (None, Some(0)));
+        assert_eq!(result.aligned_lines[1], (None, Some(1)));
+        assert_eq!(result.aligned_lines[2], (None, Some(2)));
+    }
+
+    #[test]
+    fn aligned_lines_deleted_file() {
+        let file = DifftFile {
+            path: "old.rs".into(),
+            language: "Rust".into(),
+            status: Status::Deleted,
+            aligned_lines: vec![],
+            chunks: vec![],
+        };
+        let result = process_file(file, vec!["x".into(), "y".into()], vec![], None);
+
+        // Deleted files: left maps 0..n, right is always None
+        assert_eq!(result.aligned_lines.len(), 2);
+        assert_eq!(result.aligned_lines[0], (Some(0), None));
+        assert_eq!(result.aligned_lines[1], (Some(1), None));
+    }
+
+    #[test]
+    fn aligned_lines_changed_file_preserved() {
+        let aligned = vec![
+            (Some(0), Some(0)),
+            (Some(1), Some(1)),
+            (None, Some(2)), // Addition
+            (Some(2), Some(3)),
+        ];
+        let file = DifftFile {
+            path: "mod.rs".into(),
+            language: "Rust".into(),
+            status: Status::Changed,
+            aligned_lines: aligned.clone(),
+            chunks: vec![],
+        };
+        let result = process_file(
+            file,
+            vec!["a".into(), "b".into(), "c".into()],
+            vec!["a".into(), "b".into(), "new".into(), "c".into()],
+            None,
+        );
+
+        // Changed files: aligned_lines should be passed through from difftastic
+        assert_eq!(result.aligned_lines, aligned);
+    }
+
+    #[test]
+    fn aligned_lines_with_deletion_filler() {
+        let aligned = vec![
+            (Some(0), Some(0)),
+            (Some(1), None), // Deletion - right side is filler
+            (Some(2), Some(1)),
+        ];
+        let file = DifftFile {
+            path: "del.rs".into(),
+            language: "Rust".into(),
+            status: Status::Changed,
+            aligned_lines: aligned.clone(),
+            chunks: vec![],
+        };
+        let result = process_file(
+            file,
+            vec!["a".into(), "deleted".into(), "b".into()],
+            vec!["a".into(), "b".into()],
+            None,
+        );
+
+        assert_eq!(result.aligned_lines, aligned);
+        // Row 1 should have right side as filler (None in aligned_lines)
+        assert_eq!(result.aligned_lines[1], (Some(1), None));
+    }
 }
