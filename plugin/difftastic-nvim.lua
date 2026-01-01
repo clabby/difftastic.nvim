@@ -11,11 +11,21 @@ if vim.fn.isdirectory(doc_dir) == 1 then
 end
 
 vim.api.nvim_create_user_command("Difft", function(opts)
-    local revset = opts.args:gsub("^['\"](.+)['\"]$", "%1")
-    require("difftastic-nvim").open(revset)
+    local args = opts.args
+    if args == "" then
+        -- No args: show unstaged changes
+        require("difftastic-nvim").open(nil)
+    elseif args == "--staged" then
+        -- Show staged changes
+        require("difftastic-nvim").open("--staged")
+    else
+        -- Revset/commit range
+        local revset = args:gsub("^['\"](.+)['\"]$", "%1")
+        require("difftastic-nvim").open(revset)
+    end
 end, {
-    nargs = 1,
-    desc = "Open difftastic diff view",
+    nargs = "?",
+    desc = "Open difftastic diff view (no args = unstaged, --staged = staged, or revset/commit)",
 })
 
 vim.api.nvim_create_user_command("DifftClose", function()

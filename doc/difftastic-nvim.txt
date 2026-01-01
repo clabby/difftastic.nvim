@@ -71,9 +71,14 @@ Downloaded binaries are stored in: >
 4. COMMANDS                                           *difftastic-nvim-commands*
 
                                                                         *:Difft*
-:Difft {ref}
-    Open diff view for a jj revset or git commit/range.
+:Difft [{ref}]
+    Open diff view for unstaged changes, staged changes, or a specific
+    revision/commit range.
 
+    Working directory changes (git only): >
+        :Difft                " Unstaged changes (working tree vs index)
+        :Difft --staged       " Staged changes (index vs HEAD)
+<
     jj examples: >
         :Difft @              " Current change
         :Difft @-             " Parent of current change
@@ -84,6 +89,9 @@ Downloaded binaries are stored in: >
         :Difft abc123         " Specific commit
         :Difft main..HEAD     " Commit range
 <
+    Note: For jj, `:Difft` with no args shows uncommitted changes (working
+    copy vs @). The `--staged` flag shows @ changes since jj has no staging
+    area.
                                                                    *:DifftClose*
 :DifftClose
     Close the diff view.
