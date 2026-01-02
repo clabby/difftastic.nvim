@@ -361,6 +361,12 @@ function M.first_file_in_display_order()
     return files[1]
 end
 
+function M.last_file_in_display_order()
+    if not M.tree then return nil end
+    local files = collect_visible_files(M.tree)
+    return files[#files]
+end
+
 function M.highlight_current(state)
     if not M.tree or not state.tree_buf then return end
 
