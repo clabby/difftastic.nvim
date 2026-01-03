@@ -209,8 +209,8 @@ function M.goto_file()
     local state = M.state
     local current_win = vim.api.nvim_get_current_win()
 
-    -- Only works from right pane (new version)
-    if current_win ~= state.right_win then
+    -- Only works from right pane (new version), not tree or left pane
+    if current_win ~= state.right_win or current_win == state.tree_win then
         return
     end
 
@@ -263,16 +263,9 @@ function M.goto_file()
     local filepath = file.path
 
     -- Find previous tabpage or create new one
-    local current_tab = vim.api.nvim_get_current_tabpage()
     local tabs = vim.api.nvim_list_tabpages()
-    local target_tab = nil
-
-    for i, tab in ipairs(tabs) do
-        if tab == current_tab and i > 1 then
-            target_tab = tabs[i - 1]
-            break
-        end
-    end
+    local current_idx = vim.fn.tabpagenr()
+    local target_tab = current_idx > 1 and tabs[current_idx - 1] or nil
 
     if target_tab then
         vim.api.nvim_set_current_tabpage(target_tab)
