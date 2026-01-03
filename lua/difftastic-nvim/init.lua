@@ -13,6 +13,8 @@ M.config = {
     vcs = "jj",
     --- Highlight mode: "treesitter" (full syntax) or "difftastic" (no syntax, colored changes only)
     highlight_mode = "treesitter",
+    --- When true, next_hunk at last hunk wraps to next file (and prev_hunk to prev file)
+    hunk_wrap_file = false,
     keymaps = {
         next_file = "]f",
         prev_file = "[f",
@@ -62,8 +64,15 @@ function M.setup(opts)
     if opts.highlight_mode then
         M.config.highlight_mode = opts.highlight_mode
     end
+    if opts.hunk_wrap_file ~= nil then
+        M.config.hunk_wrap_file = opts.hunk_wrap_file
+    end
     if opts.keymaps then
-        M.config.keymaps = vim.tbl_extend("force", M.config.keymaps, opts.keymaps)
+        -- Manual merge to preserve explicit false values (tbl_extend ignores them)
+        -- Note: nil values are skipped by pairs(), so they keep the default
+        for k, v in pairs(opts.keymaps) do
+            M.config.keymaps[k] = v
+        end
     end
     if opts.tree then
         if opts.tree.icons then
@@ -176,6 +185,16 @@ function M.show_file(idx)
     tree.highlight_current(M.state)
 end
 
+--- Show a file and jump to a specific hunk after rendering completes.
+--- @param idx number File index to show
+--- @param hunk_fn function Hunk function to call (e.g., diff.first_hunk or diff.last_hunk)
+local function show_file_and_jump_to_hunk(idx, hunk_fn)
+    M.show_file(idx)
+    vim.schedule(function()
+        hunk_fn(M.state)
+    end)
+end
+
 --- Navigate to the next file.
 function M.next_file()
     local next_idx = tree.next_file_in_display_order(M.state.current_file_idx)
@@ -193,13 +212,51 @@ function M.prev_file()
 end
 
 --- Navigate to the next hunk.
+--- If hunk_wrap_file is enabled and at the last hunk, wraps to the first hunk of the next file.
+--- Otherwise, wraps to the first hunk of the current file.
 function M.next_hunk()
-    diff.next_hunk(M.state)
+    local jumped = diff.next_hunk(M.state)
+    if not jumped then
+        if M.config.hunk_wrap_file then
+            local next_idx = tree.next_file_in_display_order(M.state.current_file_idx)
+            if next_idx then
+                show_file_and_jump_to_hunk(next_idx, diff.first_hunk)
+            else
+                -- At last file, wrap to first file
+                local first_idx = tree.first_file_in_display_order()
+                if first_idx then
+                    show_file_and_jump_to_hunk(first_idx, diff.first_hunk)
+                end
+            end
+        else
+            -- Wrap within current file
+            diff.first_hunk(M.state)
+        end
+    end
 end
 
 --- Navigate to the previous hunk.
+--- If hunk_wrap_file is enabled and at the first hunk, wraps to the last hunk of the previous file.
+--- Otherwise, wraps to the last hunk of the current file.
 function M.prev_hunk()
-    diff.prev_hunk(M.state)
+    local jumped = diff.prev_hunk(M.state)
+    if not jumped then
+        if M.config.hunk_wrap_file then
+            local prev_idx = tree.prev_file_in_display_order(M.state.current_file_idx)
+            if prev_idx then
+                show_file_and_jump_to_hunk(prev_idx, diff.last_hunk)
+            else
+                -- At first file, wrap to last file
+                local last_idx = tree.last_file_in_display_order()
+                if last_idx then
+                    show_file_and_jump_to_hunk(last_idx, diff.last_hunk)
+                end
+            end
+        else
+            -- Wrap within current file
+            diff.last_hunk(M.state)
+        end
+    end
 end
 
 --- Go to the file at the current cursor position in an editable buffer.

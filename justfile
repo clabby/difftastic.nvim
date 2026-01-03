@@ -20,6 +20,10 @@ lint: fmt-check
 build *args='':
   cargo build --workspace --all $@
 
-# Run tests
+# Run Rust tests
 test *args='':
   cargo nextest run --workspace --all --all-features $@
+
+# Run Lua tests (requires nvim with plenary.nvim installed)
+test-lua:
+  nvim --headless -c "PlenaryBustedDirectory tests/ {minimal_init = 'tests/minimal_init.lua'}"

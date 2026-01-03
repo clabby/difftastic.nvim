@@ -112,8 +112,8 @@ Default keybindings:
     Key         Action ~
     ]f          Next file
     [f          Previous file
-    ]c          Next hunk
-    [c          Previous hunk
+    ]c          Next hunk (see |difftastic-nvim-hunk-wrap-file|)
+    [c          Previous hunk (see |difftastic-nvim-hunk-wrap-file|)
     <Tab>       Toggle focus between file tree and diff panes
     <CR>        Select file or toggle directory (in tree)
     q           Close diff view
@@ -130,6 +130,7 @@ Call the setup function with your options: >lua
         download = false,       -- Auto-download pre-built binary (default: false)
         vcs = "jj",             -- "jj" (default) or "git"
         highlight_mode = "treesitter", -- "treesitter" (default) or "difftastic"
+        hunk_wrap_file = false, -- Wrap to next/prev file at end/start of hunks
         keymaps = {
             next_file = "]f",
             prev_file = "[f",
@@ -144,8 +145,8 @@ Call the setup function with your options: >lua
             width = 40,
             icons = {
                 enable = true,
-                dir_open = "",
-                dir_closed = "",
+                dir_open = "",
+                dir_closed = "",
             },
         },
         highlights = {
@@ -155,6 +156,7 @@ Call the setup function with your options: >lua
     })
 <
 All options are optional. Only specify what you want to override.
+Set a keymap to `false` to disable it.
 
                                                        *difftastic-nvim-download*
 download ~
@@ -183,13 +185,28 @@ highlight_mode ~
 
     Default: "treesitter"
 
+                                                  *difftastic-nvim-hunk-wrap-file*
+hunk_wrap_file ~
+    When enabled, navigating past the last hunk in a file with `next_hunk`
+    will automatically jump to the first hunk of the next file. Similarly,
+    `prev_hunk` at the first hunk will jump to the last hunk of the previous
+    file.
+
+    When at the last file, `next_hunk` wraps to the first file. When at the
+    first file, `prev_hunk` wraps to the last file.
+
+    This is useful for quickly reviewing all changes across multiple files
+    using a single key (e.g., `<Tab>` for next hunk).
+
+    Default: false
+
                                                         *difftastic-nvim-keymaps*
 Keymap options:
 
     next_file       Jump to next file in the diff
     prev_file       Jump to previous file in the diff
-    next_hunk       Jump to next change hunk within current file
-    prev_hunk       Jump to previous change hunk within current file
+    next_hunk       Jump to next change hunk (wraps to next file if enabled)
+    prev_hunk       Jump to previous change hunk (wraps to prev file if enabled)
     close           Close the diff view
     focus_tree      Move focus to the file tree (from diff panes)
     focus_diff      Move focus to the diff pane (from tree)

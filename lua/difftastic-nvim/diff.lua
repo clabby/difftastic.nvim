@@ -176,46 +176,72 @@ local function get_diff_win(state)
     return nil
 end
 
---- Jump to the next hunk (wraps to first).
+--- Jump to the next hunk.
 --- @param state table Plugin state
+--- @return boolean True if jumped to a hunk, false if at/past last hunk
 function M.next_hunk(state)
     if #M.hunk_positions == 0 then
-        return
+        return false
     end
     local win = get_diff_win(state)
     if not win then
-        return
+        return false
     end
 
     local line = vim.api.nvim_win_get_cursor(win)[1]
     for _, pos in ipairs(M.hunk_positions) do
         if pos > line then
             vim.api.nvim_win_set_cursor(win, { pos, 0 })
-            return
+            return true
         end
     end
-    vim.api.nvim_win_set_cursor(win, { M.hunk_positions[1], 0 })
+    return false
 end
 
---- Jump to the previous hunk (wraps to last).
+--- Jump to the previous hunk.
 --- @param state table Plugin state
+--- @return boolean True if jumped to a hunk, false if at/before first hunk
 function M.prev_hunk(state)
     if #M.hunk_positions == 0 then
-        return
+        return false
     end
     local win = get_diff_win(state)
     if not win then
-        return
+        return false
     end
 
     local line = vim.api.nvim_win_get_cursor(win)[1]
     for i = #M.hunk_positions, 1, -1 do
         if M.hunk_positions[i] < line then
             vim.api.nvim_win_set_cursor(win, { M.hunk_positions[i], 0 })
-            return
+            return true
         end
     end
-    vim.api.nvim_win_set_cursor(win, { M.hunk_positions[#M.hunk_positions], 0 })
+    return false
+end
+
+--- Jump to the first hunk.
+--- @param state table Plugin state
+function M.first_hunk(state)
+    if #M.hunk_positions == 0 then
+        return
+    end
+    local win = get_diff_win(state)
+    if win then
+        vim.api.nvim_win_set_cursor(win, { M.hunk_positions[1], 0 })
+    end
+end
+
+--- Jump to the last hunk.
+--- @param state table Plugin state
+function M.last_hunk(state)
+    if #M.hunk_positions == 0 then
+        return
+    end
+    local win = get_diff_win(state)
+    if win then
+        vim.api.nvim_win_set_cursor(win, { M.hunk_positions[#M.hunk_positions], 0 })
+    end
 end
 
 return M
