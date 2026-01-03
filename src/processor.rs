@@ -223,9 +223,8 @@ fn process_created(
         .collect();
 
     // For created files: left is always None, right maps 0..n
-    let aligned_lines: Vec<(Option<u32>, Option<u32>)> = (0..num_lines)
-        .map(|i| (None, Some(i as u32)))
-        .collect();
+    let aligned_lines: Vec<(Option<u32>, Option<u32>)> =
+        (0..num_lines).map(|i| (None, Some(i as u32))).collect();
 
     let (additions, deletions) = stats.unwrap_or((rows.len() as u32, 0));
     let hunk_starts = if rows.is_empty() { vec![] } else { vec![0] };
@@ -261,9 +260,8 @@ fn process_deleted(
         .collect();
 
     // For deleted files: left maps 0..n, right is always None
-    let aligned_lines: Vec<(Option<u32>, Option<u32>)> = (0..num_lines)
-        .map(|i| (Some(i as u32), None))
-        .collect();
+    let aligned_lines: Vec<(Option<u32>, Option<u32>)> =
+        (0..num_lines).map(|i| (Some(i as u32), None)).collect();
 
     let (additions, deletions) = stats.unwrap_or((0, rows.len() as u32));
     let hunk_starts = if rows.is_empty() { vec![] } else { vec![0] };

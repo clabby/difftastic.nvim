@@ -145,10 +145,7 @@ fn git_diff_stats(extra_args: &[&str]) -> FileStats {
 fn jj_diff_stats_uncommitted() -> FileStats {
     // jj diff without -r shows uncommitted changes; use git for stats
     // For uncommitted changes, we compare working copy to the current commit
-    let output = Command::new("jj")
-        .args(["diff", "--stat"])
-        .output()
-        .ok();
+    let output = Command::new("jj").args(["diff", "--stat"]).output().ok();
 
     // jj --stat output is different, so we just return empty for now
     // The diff will still work, just without inline stats
@@ -288,11 +285,7 @@ enum DiffMode {
 
 /// Fetches file content from the working tree, using the appropriate VCS root.
 fn working_tree_content_for_vcs(path: &Path, vcs: &str) -> Option<String> {
-    let root = if vcs == "git" {
-        git_root()
-    } else {
-        jj_root()
-    }?;
+    let root = if vcs == "git" { git_root() } else { jj_root() }?;
     std::fs::read_to_string(root.join(path)).ok()
 }
 
