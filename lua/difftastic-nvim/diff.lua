@@ -51,16 +51,19 @@ end
 --- Open the side-by-side diff panes.
 --- @param state table Plugin state
 function M.open(state)
+    -- Move to the rightmost window (away from tree)
+    vim.cmd("wincmd l")
+
+    -- Current window becomes left diff pane
+    state.left_win = vim.api.nvim_get_current_win()
+    state.left_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_win_set_buf(state.left_win, state.left_buf)
+
+    -- Create right diff pane
     vim.cmd("vsplit")
     state.right_win = vim.api.nvim_get_current_win()
     state.right_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_win_set_buf(state.right_win, state.right_buf)
-
-    vim.cmd("wincmd h")
-    vim.cmd("vsplit")
-    state.left_win = vim.api.nvim_get_current_win()
-    state.left_buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_win_set_buf(state.left_win, state.left_buf)
 
     setup_diff_buffer(state.left_buf)
     setup_diff_buffer(state.right_buf)

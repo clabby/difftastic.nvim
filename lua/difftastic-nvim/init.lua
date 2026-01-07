@@ -46,7 +46,8 @@ M.state = {
     left_buf = nil,
     right_win = nil,
     right_buf = nil,
-    original_buf = nil,
+    original_tabpage = nil,
+    diff_tabpage = nil,
 }
 
 --- Initialize the plugin with user options.
@@ -110,22 +111,14 @@ function M.open(revset)
     M.state.files = result.files
     M.state.current_file_idx = 1
 
-    local original_win = vim.api.nvim_get_current_win()
-    M.state.original_buf = vim.api.nvim_get_current_buf()
+    -- Store original tabpage and create new one for diff view
+    M.state.original_tabpage = vim.api.nvim_get_current_tabpage()
+    vim.cmd("tabnew")
+    M.state.diff_tabpage = vim.api.nvim_get_current_tabpage()
 
     tree.open(M.state)
     diff.open(M.state)
     keymaps.setup(M.state)
-
-    -- Close original window if it's not one of our diff windows
-    if
-        vim.api.nvim_win_is_valid(original_win)
-        and original_win ~= M.state.tree_win
-        and original_win ~= M.state.left_win
-        and original_win ~= M.state.right_win
-    then
-        vim.api.nvim_win_close(original_win, false)
-    end
 
     local first_idx = tree.first_file_in_display_order()
     if first_idx then
@@ -135,32 +128,10 @@ end
 
 --- Close the diff view.
 function M.close()
-    local wins = {}
-    for _, win in ipairs({ M.state.tree_win, M.state.left_win, M.state.right_win }) do
-        if win and vim.api.nvim_win_is_valid(win) then
-            table.insert(wins, win)
-        end
-    end
+    local diff_tabpage = M.state.diff_tabpage
+    local original_tabpage = M.state.original_tabpage
 
-    if #wins == 0 then
-        return
-    end
-
-    for _, win in ipairs(wins) do
-        if vim.api.nvim_win_is_valid(win) then
-            if #vim.api.nvim_list_wins() > 1 then
-                vim.api.nvim_win_close(win, true)
-            else
-                vim.api.nvim_set_current_win(win)
-                if M.state.original_buf and vim.api.nvim_buf_is_valid(M.state.original_buf) then
-                    vim.api.nvim_win_set_buf(win, M.state.original_buf)
-                else
-                    vim.cmd("enew")
-                end
-            end
-        end
-    end
-
+    -- Reset state first
     M.state = {
         current_file_idx = 1,
         files = {},
@@ -170,8 +141,20 @@ function M.close()
         left_buf = nil,
         right_win = nil,
         right_buf = nil,
-        original_buf = nil,
+        original_tabpage = nil,
+        diff_tabpage = nil,
     }
+
+    -- Switch to original tabpage if valid
+    if original_tabpage and vim.api.nvim_tabpage_is_valid(original_tabpage) then
+        vim.api.nvim_set_current_tabpage(original_tabpage)
+    end
+
+    -- Close the diff tabpage
+    if diff_tabpage and vim.api.nvim_tabpage_is_valid(diff_tabpage) then
+        local tabnr = vim.api.nvim_tabpage_get_number(diff_tabpage)
+        vim.cmd("tabclose " .. tabnr)
+    end
 end
 
 --- Show a specific file by index.
@@ -321,12 +304,9 @@ function M.goto_file()
 
     local filepath = file.path
 
-    -- Find previous tabpage or create new one
-    local tabs = vim.api.nvim_list_tabpages()
-    local current_idx = vim.fn.tabpagenr()
-    local target_tab = current_idx > 1 and tabs[current_idx - 1] or nil
-
-    if target_tab then
+    -- Switch to original tabpage or create new one
+    local target_tab = state.original_tabpage
+    if target_tab and vim.api.nvim_tabpage_is_valid(target_tab) then
         vim.api.nvim_set_current_tabpage(target_tab)
     else
         vim.cmd("tabnew")
