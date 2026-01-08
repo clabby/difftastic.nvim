@@ -15,6 +15,8 @@ M.config = {
     highlight_mode = "treesitter",
     --- When true, next_hunk at last hunk wraps to next file (and prev_hunk to prev file)
     hunk_wrap_file = false,
+    --- When true, scroll to first hunk after opening a file
+    scroll_to_first_hunk = false,
     keymaps = {
         next_file = "]f",
         prev_file = "[f",
@@ -67,6 +69,9 @@ function M.setup(opts)
     end
     if opts.hunk_wrap_file ~= nil then
         M.config.hunk_wrap_file = opts.hunk_wrap_file
+    end
+    if opts.scroll_to_first_hunk ~= nil then
+        M.config.scroll_to_first_hunk = opts.scroll_to_first_hunk
     end
     if opts.keymaps then
         -- Manual merge to preserve explicit false values (tbl_extend ignores them)
@@ -165,6 +170,9 @@ function M.show_file(idx)
     end
     M.state.current_file_idx = idx
     diff.render(M.state, M.state.files[idx])
+    if M.config.scroll_to_first_hunk then
+        M.next_hunk()
+    end
     tree.highlight_current(M.state)
 end
 
