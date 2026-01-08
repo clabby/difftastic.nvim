@@ -145,8 +145,9 @@ Filler lines (`╱╱╱`) indicate where content exists on one side but not the
 
 ```lua
 require("difftastic-nvim").setup({
-    download = false,            -- Auto-download pre-built binary (default: false)
-    vcs = "jj",                  -- "jj" (default) or "git"
+    download = false,              -- Auto-download pre-built binary (default: false)
+    vcs = "jj",                    -- "jj" (default) or "git"
+    hunk_wrap_file = false,        -- Next hunk at last hunk goes to next file
     highlight_mode = "treesitter", -- "treesitter" (default) or "difftastic"
     keymaps = {
         next_file = "]f",
