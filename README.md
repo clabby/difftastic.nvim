@@ -148,6 +148,7 @@ require("difftastic-nvim").setup({
     download = false,            -- Auto-download pre-built binary (default: false)
     vcs = "jj",                  -- "jj" (default) or "git"
     highlight_mode = "treesitter", -- "treesitter" (default) or "difftastic"
+    scroll_to_first_hunk = false,  -- Auto-scroll to first hunk after opening a file (default: false)
     keymaps = {
         next_file = "]f",
         prev_file = "[f",
