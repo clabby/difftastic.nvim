@@ -131,6 +131,7 @@ Call the setup function with your options: >lua
         vcs = "jj",             -- "jj" (default) or "git"
         highlight_mode = "treesitter", -- "treesitter" (default) or "difftastic"
         hunk_wrap_file = false, -- Wrap to next/prev file at end/start of hunks
+        scroll_to_first_hunk = false,  -- Auto-scroll to first hunk after opening a file (default: false)
         keymaps = {
             next_file = "]f",
             prev_file = "[f",
@@ -197,6 +198,12 @@ hunk_wrap_file ~
 
     This is useful for quickly reviewing all changes across multiple files
     using a single key (e.g., `<Tab>` for next hunk).
+
+    Default: false
+
+scroll_to_first_hunk ~
+    When enabled, opening a file in the diff view will auto-scroll to the
+    first hunk of changes instead of the top of the file.
 
     Default: false
 
