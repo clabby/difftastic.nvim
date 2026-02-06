@@ -6,8 +6,8 @@ vim.g.loaded_difftastic_nvim = true
 -- Generate helptags if needed
 local source = debug.getinfo(1, "S").source:sub(2)
 local doc_dir = vim.fn.fnamemodify(source, ":h:h") .. "/doc"
-if vim.fn.isdirectory(doc_dir) == 1 then
-    vim.cmd.helptags(doc_dir)
+if vim.fn.isdirectory(doc_dir) == 1 and vim.fn.filereadable(doc_dir .. "/tags") == 0 then
+    pcall(vim.cmd.helptags, doc_dir)
 end
 
 vim.api.nvim_create_user_command("Difft", function(opts)
