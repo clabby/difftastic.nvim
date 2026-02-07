@@ -28,18 +28,15 @@ view with syntax highlighting.
 > [!WARNING]
 >
 > This plugin requires difftastic with `aligned_lines` support in JSON output. This feature is available in
-> [this fork](https://github.com/clabby/difftastic/tree/cl/add-aligned-lines) until
-> [PR #936](https://github.com/Wilfred/difftastic/pull/936) is merged upstream.
+> `main`, though hasn't yet landed in a release.
 >
-> To install the fork:
+> To build `difftastic` from source:
 > ```sh
 > # Clone with 'jj'
-> jj git clone https://github.com/clabby/difftastic.git \
->     --colocate \
->     -b cl/add-aligned-lines
+> jj git clone git@github.com:Wilfred/difftastic.git --colocate
 >
 > # Or, clone with 'git'
-> git clone https://github.com/clabby/difftastic.git -b cl/add-aligned-lines
+> git clone git@github.com:Wilfred/difftastic.git
 >
 > # Install 'difft' with the 'aligned_lines' feature
 > cd difftastic && cargo install --path .
