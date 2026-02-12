@@ -3,6 +3,21 @@ local M = {}
 
 local FILLER = string.rep("╱", 500)
 
+--- Ensure treesitter is attached for a buffer/filetype.
+--- @param buf number
+--- @param ft string
+local function ensure_treesitter(buf, ft)
+    if not vim.api.nvim_buf_is_valid(buf) then
+        return
+    end
+
+    if vim.bo[buf].filetype ~= ft then
+        vim.bo[buf].filetype = ft
+    end
+
+    pcall(vim.treesitter.start, buf, ft)
+end
+
 --- Line positions where hunks start (1-indexed)
 --- @type number[]
 M.hunk_positions = {}
@@ -111,14 +126,8 @@ function M.render(state, file)
     if use_treesitter then
         local ft = FILETYPES[file.language]
         if ft then
-            vim.defer_fn(function()
-                if vim.api.nvim_buf_is_valid(state.left_buf) then
-                    vim.bo[state.left_buf].filetype = ft
-                end
-                if vim.api.nvim_buf_is_valid(state.right_buf) then
-                    vim.bo[state.right_buf].filetype = ft
-                end
-            end, 10)
+            ensure_treesitter(state.left_buf, ft)
+            ensure_treesitter(state.right_buf, ft)
         end
     end
 
