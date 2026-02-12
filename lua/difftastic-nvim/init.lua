@@ -171,7 +171,7 @@ function M.show_file(idx)
     M.state.current_file_idx = idx
     diff.render(M.state, M.state.files[idx])
     if M.config.scroll_to_first_hunk then
-        M.next_hunk()
+        diff.first_hunk(M.state)
     end
     tree.highlight_current(M.state)
 end
@@ -215,7 +215,7 @@ function M.next_hunk()
             else
                 -- At last file, wrap to first file
                 local first_idx = tree.first_file_in_display_order()
-                if first_idx then
+                if first_idx and first_idx ~= M.state.current_file_idx then
                     show_file_and_jump_to_hunk(first_idx, diff.first_hunk)
                 end
             end
@@ -240,7 +240,7 @@ function M.prev_hunk()
             else
                 -- At first file, wrap to last file
                 local last_idx = tree.last_file_in_display_order()
-                if last_idx then
+                if last_idx and last_idx ~= M.state.current_file_idx then
                     show_file_and_jump_to_hunk(last_idx, diff.last_hunk)
                 end
             end

@@ -218,7 +218,7 @@ fn process_created(
         .into_iter()
         .map(|line| Row {
             left: Side::filler(),
-            right: Side::with_full_highlight(line),
+            right: Side::new(line, false, Highlights::new()),
         })
         .collect();
 
@@ -592,8 +592,7 @@ mod tests {
         assert!(result.rows[0].left.is_filler);
         assert_eq!(result.rows[0].right.content, "a");
         assert!(!result.rows[0].right.is_filler);
-        assert_eq!(result.rows[0].right.highlights.len(), 1);
-        assert_eq!(result.rows[0].right.highlights[0].end, -1); // full line
+        assert!(result.rows[0].right.highlights.is_empty());
         assert_eq!(result.additions, 2);
         assert_eq!(result.deletions, 0);
     }

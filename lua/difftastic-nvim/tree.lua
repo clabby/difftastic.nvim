@@ -194,6 +194,11 @@ local function prepare_node(node)
     -- Name
     line:append(node.name)
 
+    if node.status == "created" then
+        line:append(" ")
+        line:append("[NEW]", "DifftFileAdded")
+    end
+
     -- Stats
     if node.additions > 0 or node.deletions > 0 then
         line:append(" ")

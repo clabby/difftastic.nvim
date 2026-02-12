@@ -258,6 +258,44 @@ fn git_merge_base(a: &str, b: &str) -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
+/// Expands diff display paths for renames/moves into concrete old/new paths.
+///
+/// Handles common formats:
+/// - `old/path => new/path`
+/// - `old/path -> new/path`
+/// - `src/{old => new}.rs`
+fn split_display_path(path: &Path) -> (PathBuf, PathBuf) {
+    let raw = path.to_string_lossy();
+
+    if let (Some(open), Some(close)) = (raw.find('{'), raw.rfind('}'))
+        && close > open
+    {
+        let prefix = &raw[..open];
+        let suffix = &raw[(close + 1)..];
+        let inner = &raw[(open + 1)..close];
+
+        for arrow in [" => ", " -> "] {
+            if let Some((lhs, rhs)) = inner.split_once(arrow) {
+                if !lhs.trim().is_empty() && !rhs.trim().is_empty() {
+                    let old_path = format!("{prefix}{}{suffix}", lhs.trim());
+                    let new_path = format!("{prefix}{}{suffix}", rhs.trim());
+                    return (PathBuf::from(old_path), PathBuf::from(new_path));
+                }
+            }
+        }
+    }
+
+    for arrow in [" => ", " -> "] {
+        if let Some((lhs, rhs)) = raw.split_once(arrow) {
+            if !lhs.trim().is_empty() && !rhs.trim().is_empty() {
+                return (PathBuf::from(lhs.trim()), PathBuf::from(rhs.trim()));
+            }
+        }
+    }
+
+    (path.to_path_buf(), path.to_path_buf())
+}
+
 /// Parses a git commit range into `(old_commit, new_commit)` references.
 ///
 /// Handles single commits, `A..B` ranges, and `A...B` (merge-base) ranges.
@@ -335,8 +373,9 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .into_par_iter()
                 .map(|file| {
                     let file_stats = stats.get(&file.path).copied();
-                    let old_lines = into_lines(git_file_content(&old_ref, &file.path));
-                    let new_lines = into_lines(git_file_content(&new_ref, &file.path));
+                    let (old_path, new_path) = split_display_path(&file.path);
+                    let old_lines = into_lines(git_file_content(&old_ref, &old_path));
+                    let new_lines = into_lines(git_file_content(&new_ref, &new_path));
                     processor::process_file(file, old_lines, new_lines, file_stats)
                 })
                 .collect()
@@ -348,8 +387,9 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .into_par_iter()
                 .map(|file| {
                     let file_stats = stats.get(&file.path).copied();
-                    let old_lines = into_lines(jj_file_content(&old_ref, &file.path));
-                    let new_lines = into_lines(jj_file_content(&new_ref, &file.path));
+                    let (old_path, new_path) = split_display_path(&file.path);
+                    let old_lines = into_lines(jj_file_content(&old_ref, &old_path));
+                    let new_lines = into_lines(jj_file_content(&new_ref, &new_path));
                     processor::process_file(file, old_lines, new_lines, file_stats)
                 })
                 .collect()
@@ -358,8 +398,9 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .into_par_iter()
             .map(|file| {
                 let file_stats = stats.get(&file.path).copied();
-                let old_lines = into_lines(git_index_content(&file.path));
-                let new_lines = into_lines(working_tree_content_for_vcs(&file.path, "git"));
+                let (old_path, new_path) = split_display_path(&file.path);
+                let old_lines = into_lines(git_index_content(&old_path));
+                let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "git"));
                 processor::process_file(file, old_lines, new_lines, file_stats)
             })
             .collect(),
@@ -367,8 +408,9 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .into_par_iter()
             .map(|file| {
                 let file_stats = stats.get(&file.path).copied();
-                let old_lines = into_lines(jj_file_content("@", &file.path));
-                let new_lines = into_lines(working_tree_content_for_vcs(&file.path, "jj"));
+                let (old_path, new_path) = split_display_path(&file.path);
+                let old_lines = into_lines(jj_file_content("@", &old_path));
+                let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
                 processor::process_file(file, old_lines, new_lines, file_stats)
             })
             .collect(),
@@ -376,8 +418,9 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .into_par_iter()
             .map(|file| {
                 let file_stats = stats.get(&file.path).copied();
-                let old_lines = into_lines(git_file_content("HEAD", &file.path));
-                let new_lines = into_lines(git_index_content(&file.path));
+                let (old_path, new_path) = split_display_path(&file.path);
+                let old_lines = into_lines(git_file_content("HEAD", &old_path));
+                let new_lines = into_lines(git_index_content(&new_path));
                 processor::process_file(file, old_lines, new_lines, file_stats)
             })
             .collect(),
@@ -385,8 +428,9 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .into_par_iter()
             .map(|file| {
                 let file_stats = stats.get(&file.path).copied();
-                let old_lines = into_lines(jj_file_content("@-", &file.path));
-                let new_lines = into_lines(jj_file_content("@", &file.path));
+                let (old_path, new_path) = split_display_path(&file.path);
+                let old_lines = into_lines(jj_file_content("@-", &old_path));
+                let new_lines = into_lines(jj_file_content("@", &new_path));
                 processor::process_file(file, old_lines, new_lines, file_stats)
             })
             .collect(),
@@ -477,5 +521,26 @@ mod tests {
         let (old, new) = parse_git_range("..HEAD");
         assert_eq!(old, "");
         assert_eq!(new, "HEAD");
+    }
+
+    #[test]
+    fn test_split_display_path_plain() {
+        let (old, new) = split_display_path(Path::new("src/lib.rs"));
+        assert_eq!(old, PathBuf::from("src/lib.rs"));
+        assert_eq!(new, PathBuf::from("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_split_display_path_arrow() {
+        let (old, new) = split_display_path(Path::new("src/old.rs => src/new.rs"));
+        assert_eq!(old, PathBuf::from("src/old.rs"));
+        assert_eq!(new, PathBuf::from("src/new.rs"));
+    }
+
+    #[test]
+    fn test_split_display_path_brace() {
+        let (old, new) = split_display_path(Path::new("src/{old => new}.rs"));
+        assert_eq!(old, PathBuf::from("src/old.rs"));
+        assert_eq!(new, PathBuf::from("src/new.rs"));
     }
 }
