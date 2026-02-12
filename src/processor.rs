@@ -200,7 +200,7 @@ pub fn process_file(
     match file.status {
         Status::Created => process_created(file, new_lines, stats),
         Status::Deleted => process_deleted(file, old_lines, stats),
-        Status::Changed => process_changed(file, &old_lines, &new_lines, stats),
+        Status::Changed | Status::Unchanged => process_changed(file, &old_lines, &new_lines, stats),
     }
 }
 
@@ -519,6 +519,7 @@ impl IntoLua for DisplayFile {
         table.set(
             "status",
             match self.status {
+                Status::Unchanged => "unchanged",
                 Status::Created => "created",
                 Status::Deleted => "deleted",
                 Status::Changed => "changed",
@@ -556,7 +557,7 @@ impl IntoLua for DisplayFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::difftastic::{DiffLine, Side as DiffSide};
+    use crate::difftastic::{DiffLine, Highlight, Side as DiffSide};
 
     /// Helper to create a Change with only start/end (content and highlight empty).
     fn change(start: u32, end: u32) -> Change {
@@ -564,7 +565,7 @@ mod tests {
             start,
             end,
             content: String::new(),
-            highlight: String::new(),
+            highlight: Highlight::Normal,
         }
     }
 

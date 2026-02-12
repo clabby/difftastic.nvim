@@ -39,6 +39,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
+    Unchanged,
     Created,
     Deleted,
     Changed,
@@ -118,9 +119,33 @@ pub struct Change {
     /// - `"type"` - Type names
     /// - `"normal"` - Regular code without special highlighting
     ///
-    /// This can be empty if no syntax information is available.
-    #[serde(default)]
-    pub highlight: String,
+    /// This is always present in difftastic JSON output.
+    pub highlight: Highlight,
+}
+
+/// Token highlight categories emitted by difftastic JSON.
+///
+/// These variants map directly to difftastic's `display::json::Highlight` enum.
+/// The value appears in each [`Change`] as the `highlight` field and indicates
+/// the token class for syntax-aware rendering.
+///
+/// - `Delimiter`: punctuation and structural delimiters (`{}`, `()`, `,`, `;`)
+/// - `Normal`: plain identifiers/text without a special token class
+/// - `String`: string literal content
+/// - `Type`: type names and type-like symbols
+/// - `Comment`: line or block comments
+/// - `Keyword`: language keywords (`fn`, `let`, `if`, etc.)
+/// - `TreeSitterError`: parser error spans reported by tree-sitter
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Highlight {
+    Delimiter,
+    Normal,
+    String,
+    Type,
+    Comment,
+    Keyword,
+    TreeSitterError,
 }
 
 /// Parses difftastic JSON output into a list of file entries.
@@ -304,8 +329,8 @@ mod tests {
         let files = parse(json).unwrap();
         let rhs = files[0].chunks[0][0].rhs.as_ref().unwrap();
         assert_eq!(rhs.changes.len(), 3);
-        assert_eq!(rhs.changes[0].highlight, "keyword");
-        assert_eq!(rhs.changes[2].highlight, "string");
+        assert_eq!(rhs.changes[0].highlight, Highlight::Keyword);
+        assert_eq!(rhs.changes[2].highlight, Highlight::String);
     }
 
     #[test]
@@ -335,5 +360,18 @@ mod tests {
         assert_eq!(files[0].aligned_lines[0], (Some(0), Some(0)));
         assert_eq!(files[0].aligned_lines[1], (Some(1), None));
         assert_eq!(files[0].aligned_lines[2], (Some(2), Some(1)));
+    }
+
+    #[test]
+    fn parse_unchanged_status() {
+        let json = r#"[{
+            "path": "src/lib.rs",
+            "language": "Rust",
+            "status": "unchanged",
+            "chunks": []
+        }]"#;
+
+        let files = parse(json).unwrap();
+        assert_eq!(files[0].status, Status::Unchanged);
     }
 }
