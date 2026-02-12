@@ -32,6 +32,8 @@ Features:
 - difftastic with aligned_lines support (see note below)
 - jj or git version control
 - Rust toolchain (only if building from source)
+- snacks.nvim (https://github.com/folke/snacks.nvim) (optional, for
+  |:DifftPick|)
 
 Note: This plugin requires difftastic with `aligned_lines` support in JSON
 output. This feature is available in this fork until PR #936 is merged:
@@ -82,6 +84,7 @@ Downloaded binaries are stored in: >
     jj examples: >
         :Difft @              " Current change
         :Difft @-             " Parent of current change
+        :Difft w              " Change-id prefix (equivalent to jj diff -r w)
         :Difft abc123         " Specific revision
 <
     git examples: >
@@ -91,15 +94,38 @@ Downloaded binaries are stored in: >
 <
     Note: For jj, `:Difft` with no args shows uncommitted changes (working
     copy vs @). The `--staged` flag shows @ changes since jj has no staging
-    area.
+    area. To view the parent change explicitly, use `:Difft @-` which is
+    equivalent to `jj diff -r @-`.
                                                                    *:DifftClose*
 :DifftClose
     Close the diff view.
 
-                                                                  *:DifftUpdate*
+                                                                   *:DifftUpdate*
 :DifftUpdate
     Update the binary to the latest release. Only available when using
     auto-download (`download = true`).
+
+                                                                      *:DifftPick*
+:DifftPick
+    Open a snacks.nvim picker to choose a jj revision or git commit, then open
+    its diff in the side-by-side view.
+
+    Notes:
+    - Requires snacks.nvim and `snacks_picker.enabled = true`.
+    - For jj, the picker includes a preview pane with `jj log` output.
+    - For git, the picker currently has no preview pane.
+
+                                                                 *:DifftPickRange*
+:DifftPickRange
+    Open a two-step snacks.nvim picker to select a diff range:
+    1. Choose the range end revision/commit
+    2. Choose a parent revision/commit as the range start
+
+    The resulting diff opens as `<start>..<end>`.
+
+    Notes:
+    - Requires snacks.nvim and `snacks_picker.enabled = true`.
+    - The start picker is restricted to parent history of the selected end.
 
 ==============================================================================
 5. KEYBINDINGS                                     *difftastic-nvim-keybindings*
@@ -130,8 +156,13 @@ Call the setup function with your options: >lua
         download = false,       -- Auto-download pre-built binary (default: false)
         vcs = "jj",             -- "jj" (default) or "git"
         highlight_mode = "treesitter", -- "treesitter" (default) or "difftastic"
-        hunk_wrap_file = false, -- Wrap to next/prev file at end/start of hunks
-        scroll_to_first_hunk = false,  -- Auto-scroll to first hunk after opening a file (default: false)
+        hunk_wrap_file = true, -- Wrap to next/prev file at end/start of hunks
+        scroll_to_first_hunk = true,  -- Auto-scroll to first hunk after opening a file (default: true)
+        snacks_picker = {
+            enabled = false,    -- Enable :DifftPick (default: false)
+            limit = 200,        -- Max revisions/commits to show (default: 200)
+            jj_log_revset = nil, -- Optional jj revset for picker log; nil uses jj default
+        },
         keymaps = {
             next_file = "]f",
             prev_file = "[f",
@@ -170,6 +201,23 @@ download ~
 
     Default: false
 
+                                                *difftastic-nvim-snacks-picker*
+snacks_picker ~
+    Optional integration for selecting revisions/commits with snacks.nvim.
+
+    `enabled`
+        Enables |:DifftPick| command integration.
+        Default: false
+
+    `limit`
+        Maximum number of revisions/commits shown in the picker.
+        Default: 200
+
+    `jj_log_revset`
+        Optional revset passed to `jj log -r <revset>` when collecting picker
+        entries. If nil, `-r` is omitted and jj's default log scope is used.
+        Default: nil
+
                                                  *difftastic-nvim-highlight-mode*
 highlight_mode ~
     Controls how syntax highlighting is applied in diff buffers:
@@ -199,13 +247,13 @@ hunk_wrap_file ~
     This is useful for quickly reviewing all changes across multiple files
     using a single key (e.g., `<Tab>` for next hunk).
 
-    Default: false
+    Default: true
 
 scroll_to_first_hunk ~
     When enabled, opening a file in the diff view will auto-scroll to the
     first hunk of changes instead of the top of the file.
 
-    Default: false
+    Default: true
 
                                                         *difftastic-nvim-keymaps*
 Keymap options:
@@ -251,6 +299,15 @@ Tree highlights:
     DifftFileAdded        Links to `Added`        Added files
     DifftFileDeleted      Links to `Removed`      Deleted files
     DifftTreeCurrent      Derived from `Normal`   Current file highlight
+
+Picker highlights:
+    DifftPickerPreviewHover  Derived from `Normal`   Hovered jj revision lines in preview
+    DifftPickerJjIconCurrent Links to `Added`        `@` icon in jj picker list
+    DifftPickerJjIconImmutable Links to `Removed`    `◆` icon in jj picker list
+    DifftPickerJjIconNormal  Links to `Directory`    `○` icon in jj picker list
+    DifftPickerJjDesc        Derived from `Normal`   Description text in jj picker list
+    DifftPickerJjRevset      Links to `Identifier`   Change/revset id in jj picker list
+    DifftPickerJjAge         Links to `Comment`      Age field in jj picker list
 
 Other:
     DifftFiller           Derived from `Normal`   Filler lines for gaps

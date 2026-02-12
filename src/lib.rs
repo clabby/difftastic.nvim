@@ -165,14 +165,45 @@ fn jj_to_git_commit(revset: &str) -> Option<String> {
         return None;
     }
 
-    let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let commits: Vec<_> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if commits.len() != 1 {
+        return None;
+    }
+
+    let commit = commits[0].to_string();
     // Valid git commit hash is 40 hex characters
     (commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit())).then_some(commit)
+}
+
+/// Parses a jj range of the form `A..B` into `(A, B)`.
+/// Returns `None` for non-range revsets.
+#[inline]
+fn parse_jj_range(revset: &str) -> Option<(String, String)> {
+    let (old, new) = revset.split_once("..")?;
+    if old.is_empty() || new.is_empty() {
+        return None;
+    }
+    Some((old.to_string(), new.to_string()))
 }
 
 /// Gets diff stats from jj by translating revsets to git commits.
 /// For colocated repos, uses `git diff --numstat` for accurate stats.
 fn jj_diff_stats(revset: &str) -> FileStats {
+    if let Some((old_rev, new_rev)) = parse_jj_range(revset) {
+        let old_commit = jj_to_git_commit(&old_rev);
+        let new_commit = jj_to_git_commit(&new_rev);
+        return match (old_commit, new_commit) {
+            (Some(old), Some(new)) => git_diff_stats(&[&format!("{old}..{new}")]),
+            _ => HashMap::new(),
+        };
+    }
+
     let old_commit = jj_to_git_commit(&format!("roots({revset})-"));
     let new_commit = jj_to_git_commit(&format!("heads({revset})"));
 
@@ -275,25 +306,57 @@ fn split_display_path(path: &Path) -> (PathBuf, PathBuf) {
         let inner = &raw[(open + 1)..close];
 
         for arrow in [" => ", " -> "] {
-            if let Some((lhs, rhs)) = inner.split_once(arrow) {
-                if !lhs.trim().is_empty() && !rhs.trim().is_empty() {
-                    let old_path = format!("{prefix}{}{suffix}", lhs.trim());
-                    let new_path = format!("{prefix}{}{suffix}", rhs.trim());
-                    return (PathBuf::from(old_path), PathBuf::from(new_path));
-                }
+            if let Some((lhs, rhs)) = inner.split_once(arrow)
+                && !lhs.trim().is_empty()
+                && !rhs.trim().is_empty()
+            {
+                let old_path = format!("{prefix}{}{suffix}", lhs.trim());
+                let new_path = format!("{prefix}{}{suffix}", rhs.trim());
+                return (PathBuf::from(old_path), PathBuf::from(new_path));
             }
         }
     }
 
     for arrow in [" => ", " -> "] {
-        if let Some((lhs, rhs)) = raw.split_once(arrow) {
-            if !lhs.trim().is_empty() && !rhs.trim().is_empty() {
-                return (PathBuf::from(lhs.trim()), PathBuf::from(rhs.trim()));
-            }
+        if let Some((lhs, rhs)) = raw.split_once(arrow)
+            && !lhs.trim().is_empty()
+            && !rhs.trim().is_empty()
+        {
+            return (PathBuf::from(lhs.trim()), PathBuf::from(rhs.trim()));
         }
     }
 
     (path.to_path_buf(), path.to_path_buf())
+}
+
+fn prepare_file_for_display(
+    file: &mut difftastic::DifftFile,
+    stats: &FileStats,
+) -> (Option<(u32, u32)>, PathBuf, PathBuf, Option<PathBuf>) {
+    let file_stats = stats.get(&file.path).copied();
+    let (old_path, new_path) = split_display_path(&file.path);
+
+    let moved_from = if old_path != new_path {
+        file.path = new_path.clone();
+        file.status = difftastic::Status::Created;
+        Some(old_path.clone())
+    } else {
+        None
+    };
+
+    (file_stats, old_path, new_path, moved_from)
+}
+
+fn process_prepared_file(
+    file: difftastic::DifftFile,
+    old_lines: Vec<String>,
+    new_lines: Vec<String>,
+    file_stats: Option<(u32, u32)>,
+    moved_from: Option<PathBuf>,
+) -> processor::DisplayFile {
+    let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+    display.moved_from = moved_from;
+    display
 }
 
 fn parse_jj_summary_rename(line: &str) -> Option<(PathBuf, PathBuf)> {
@@ -415,8 +478,10 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
     // Get files and stats based on mode and VCS
     let (files, stats) = match (&mode, vcs) {
         (DiffMode::Range(range), "git") => {
-            let files = run_git_diff(&[range]).map_err(LuaError::RuntimeError)?;
-            let stats = git_diff_stats(&[range]);
+            let (old_ref, new_ref) = parse_git_range(range);
+            let git_range = format!("{old_ref}..{new_ref}");
+            let files = run_git_diff(&[&git_range]).map_err(LuaError::RuntimeError)?;
+            let stats = git_diff_stats(&[&git_range]);
             (files, stats)
         }
         (DiffMode::Range(range), _) => {
@@ -454,120 +519,66 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             files
                 .into_par_iter()
                 .map(|mut file| {
-                    let file_stats = stats.get(&file.path).copied();
-                    let (old_path, new_path) = split_display_path(&file.path);
-                    let moved_from = if old_path != new_path {
-                        file.path = new_path.clone();
-                        file.status = difftastic::Status::Created;
-                        Some(old_path.clone())
-                    } else {
-                        None
-                    };
+                    let (file_stats, old_path, new_path, moved_from) =
+                        prepare_file_for_display(&mut file, &stats);
                     let old_lines = into_lines(git_file_content(&old_ref, &old_path));
                     let new_lines = into_lines(git_file_content(&new_ref, &new_path));
-                    let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
-                    display.moved_from = moved_from;
-                    display
+                    process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
                 })
                 .collect()
         }
         (DiffMode::Range(range), _) => {
-            let old_ref = format!("roots({range})-");
-            let new_ref = format!("heads({range})");
+            let (old_ref, new_ref) = parse_jj_range(range)
+                .unwrap_or_else(|| (format!("roots({range})-"), format!("heads({range})")));
             files
                 .into_par_iter()
                 .map(|mut file| {
-                    let file_stats = stats.get(&file.path).copied();
-                    let (old_path, new_path) = split_display_path(&file.path);
-                    let moved_from = if old_path != new_path {
-                        file.path = new_path.clone();
-                        file.status = difftastic::Status::Created;
-                        Some(old_path.clone())
-                    } else {
-                        None
-                    };
+                    let (file_stats, old_path, new_path, moved_from) =
+                        prepare_file_for_display(&mut file, &stats);
                     let old_lines = into_lines(jj_file_content(&old_ref, &old_path));
                     let new_lines = into_lines(jj_file_content(&new_ref, &new_path));
-                    let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
-                    display.moved_from = moved_from;
-                    display
+                    process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
                 })
                 .collect()
         }
         (DiffMode::Unstaged, "git") => files
             .into_par_iter()
             .map(|mut file| {
-                let file_stats = stats.get(&file.path).copied();
-                let (old_path, new_path) = split_display_path(&file.path);
-                let moved_from = if old_path != new_path {
-                    file.path = new_path.clone();
-                    file.status = difftastic::Status::Created;
-                    Some(old_path.clone())
-                } else {
-                    None
-                };
+                let (file_stats, old_path, new_path, moved_from) =
+                    prepare_file_for_display(&mut file, &stats);
                 let old_lines = into_lines(git_index_content(&old_path));
                 let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "git"));
-                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
-                display.moved_from = moved_from;
-                display
+                process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
             .collect(),
         (DiffMode::Unstaged, _) => files
             .into_par_iter()
             .map(|mut file| {
-                let file_stats = stats.get(&file.path).copied();
-                let (old_path, new_path) = split_display_path(&file.path);
-                let moved_from = if old_path != new_path {
-                    file.path = new_path.clone();
-                    file.status = difftastic::Status::Created;
-                    Some(old_path.clone())
-                } else {
-                    None
-                };
+                let (file_stats, old_path, new_path, moved_from) =
+                    prepare_file_for_display(&mut file, &stats);
                 let old_lines = into_lines(jj_file_content("@", &old_path));
                 let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
-                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
-                display.moved_from = moved_from;
-                display
+                process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
             .collect(),
         (DiffMode::Staged, "git") => files
             .into_par_iter()
             .map(|mut file| {
-                let file_stats = stats.get(&file.path).copied();
-                let (old_path, new_path) = split_display_path(&file.path);
-                let moved_from = if old_path != new_path {
-                    file.path = new_path.clone();
-                    file.status = difftastic::Status::Created;
-                    Some(old_path.clone())
-                } else {
-                    None
-                };
+                let (file_stats, old_path, new_path, moved_from) =
+                    prepare_file_for_display(&mut file, &stats);
                 let old_lines = into_lines(git_file_content("HEAD", &old_path));
                 let new_lines = into_lines(git_index_content(&new_path));
-                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
-                display.moved_from = moved_from;
-                display
+                process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
             .collect(),
         (DiffMode::Staged, _) => files
             .into_par_iter()
             .map(|mut file| {
-                let file_stats = stats.get(&file.path).copied();
-                let (old_path, new_path) = split_display_path(&file.path);
-                let moved_from = if old_path != new_path {
-                    file.path = new_path.clone();
-                    file.status = difftastic::Status::Created;
-                    Some(old_path.clone())
-                } else {
-                    None
-                };
+                let (file_stats, old_path, new_path, moved_from) =
+                    prepare_file_for_display(&mut file, &stats);
                 let old_lines = into_lines(jj_file_content("@-", &old_path));
                 let new_lines = into_lines(jj_file_content("@", &new_path));
-                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
-                display.moved_from = moved_from;
-                display
+                process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
             .collect(),
     };
@@ -685,6 +696,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_jj_range_double_dot() {
+        let (old, new) = parse_jj_range("main@origin..@").unwrap();
+        assert_eq!(old, "main@origin");
+        assert_eq!(new, "@");
+    }
+
+    #[test]
+    fn test_parse_jj_range_non_range() {
+        assert!(parse_jj_range("@").is_none());
+    }
+
+    #[test]
     fn test_split_display_path_plain() {
         let (old, new) = split_display_path(Path::new("src/lib.rs"));
         assert_eq!(old, PathBuf::from("src/lib.rs"));
@@ -722,8 +745,11 @@ mod tests {
     #[test]
     fn test_parse_jj_summary_renames_map() {
         let renames = parse_jj_summary_renames("R a.txt => b.txt\nA c.txt\n");
-        assert_eq!(renames.get(Path::new("b.txt")), Some(&PathBuf::from("a.txt")));
-        assert!(renames.get(Path::new("c.txt")).is_none());
+        assert_eq!(
+            renames.get(Path::new("b.txt")),
+            Some(&PathBuf::from("a.txt"))
+        );
+        assert!(!renames.contains_key(Path::new("c.txt")));
     }
 
     #[test]
@@ -736,7 +762,10 @@ mod tests {
     #[test]
     fn test_parse_git_name_status_renames_map() {
         let renames = parse_git_name_status_renames("R090\ta.txt\tb.txt\nM c.txt\n");
-        assert_eq!(renames.get(Path::new("b.txt")), Some(&PathBuf::from("a.txt")));
-        assert!(renames.get(Path::new("c.txt")).is_none());
+        assert_eq!(
+            renames.get(Path::new("b.txt")),
+            Some(&PathBuf::from("a.txt"))
+        );
+        assert!(!renames.contains_key(Path::new("c.txt")));
     }
 }

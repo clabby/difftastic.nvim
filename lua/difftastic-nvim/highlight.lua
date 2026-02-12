@@ -57,6 +57,13 @@ M.linked = {
     DifftFileAdded = { link = "Added" },
     DifftFileDeleted = { link = "Removed" },
     DifftDirectory = { link = "Directory" },
+
+    -- Picker text highlights
+    DifftPickerJjIconCurrent = { link = "Added" },
+    DifftPickerJjIconImmutable = { link = "Removed" },
+    DifftPickerJjIconNormal = { link = "Directory" },
+    DifftPickerJjRevset = { link = "Identifier" },
+    DifftPickerJjAge = { link = "Comment" },
 }
 
 
@@ -84,6 +91,8 @@ local function apply_highlights(overrides)
         DifftAdded = { bg = added_bg },
         DifftRemoved = { bg = removed_bg },
         DifftTreeCurrent = { bg = normal_blend, bold = true },
+        DifftPickerPreviewHover = { bg = normal_blend, bold = true },
+        DifftPickerJjDesc = { fg = normal_fg },
         -- Foreground highlights
         DifftAddedInlineFg = { fg = added_fg, bold = true },
         DifftRemovedInlineFg = { fg = removed_fg, bold = true },

@@ -39,3 +39,15 @@ vim.api.nvim_create_user_command("DifftUpdate", function()
 end, {
     desc = "Update difftastic-nvim binary to latest release",
 })
+
+vim.api.nvim_create_user_command("DifftPick", function()
+    require("difftastic-nvim").pick_revision()
+end, {
+    desc = "Pick a jj revision or git commit with snacks.nvim",
+})
+
+vim.api.nvim_create_user_command("DifftPickRange", function()
+    require("difftastic-nvim").pick_range()
+end, {
+    desc = "Pick start/end revisions with snacks.nvim",
+})

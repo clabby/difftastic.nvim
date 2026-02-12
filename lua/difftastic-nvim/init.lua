@@ -14,9 +14,9 @@ M.config = {
     --- Highlight mode: "treesitter" (full syntax) or "difftastic" (no syntax, colored changes only)
     highlight_mode = "treesitter",
     --- When true, next_hunk at last hunk wraps to next file (and prev_hunk to prev file)
-    hunk_wrap_file = false,
+    hunk_wrap_file = true,
     --- When true, scroll to first hunk after opening a file
-    scroll_to_first_hunk = false,
+    scroll_to_first_hunk = true,
     keymaps = {
         next_file = "]f",
         prev_file = "[f",
@@ -35,6 +35,11 @@ M.config = {
             dir_open = "",
             dir_closed = "",
         },
+    },
+    snacks_picker = {
+        enabled = false,
+        limit = 200,
+        jj_log_revset = nil,
     },
 }
 
@@ -87,6 +92,9 @@ function M.setup(opts)
         if opts.tree.width then
             M.config.tree.width = opts.tree.width
         end
+    end
+    if opts.snacks_picker then
+        M.config.snacks_picker = vim.tbl_extend("force", M.config.snacks_picker, opts.snacks_picker)
     end
 
     highlight.setup(opts.highlights)
@@ -191,6 +199,12 @@ function M.next_file()
     local next_idx = tree.next_file_in_display_order(M.state.current_file_idx)
     if next_idx then
         M.show_file(next_idx)
+        return
+    end
+
+    local first_idx = tree.first_file_in_display_order()
+    if first_idx and first_idx ~= M.state.current_file_idx then
+        M.show_file(first_idx)
     end
 end
 
@@ -199,6 +213,12 @@ function M.prev_file()
     local prev_idx = tree.prev_file_in_display_order(M.state.current_file_idx)
     if prev_idx then
         M.show_file(prev_idx)
+        return
+    end
+
+    local last_idx = tree.last_file_in_display_order()
+    if last_idx and last_idx ~= M.state.current_file_idx then
+        M.show_file(last_idx)
     end
 end
 
@@ -331,6 +351,30 @@ end
 --- Update binary to latest release.
 function M.update()
     binary.update()
+end
+
+--- Pick a revision/commit with snacks.nvim and open diff view.
+function M.pick_revision()
+    if not M.config.snacks_picker.enabled then
+        vim.notify("snacks picker integration is disabled; set snacks_picker.enabled = true", vim.log.levels.WARN)
+        return
+    end
+
+    require("difftastic-nvim.picker").pick(M.config.vcs, M.config.snacks_picker, function(rev)
+        M.open(rev)
+    end)
+end
+
+--- Pick a start/end revision range with snacks.nvim and open diff view.
+function M.pick_range()
+    if not M.config.snacks_picker.enabled then
+        vim.notify("snacks picker integration is disabled; set snacks_picker.enabled = true", vim.log.levels.WARN)
+        return
+    end
+
+    require("difftastic-nvim.picker").pick_range(M.config.vcs, M.config.snacks_picker, function(start_rev, end_rev)
+        M.open(string.format("%s..%s", start_rev, end_rev))
+    end)
 end
 
 return M

@@ -14,6 +14,7 @@ view with syntax highlighting.
 - Syntax highlighting for the source language
 - Filler lines to visually indicate alignment gaps
 - Support for both [jj](https://github.com/martinvonz/jj) and [git](https://git-scm.com/) version control
+- Optional snacks.nvim picker for selecting a revision/commit
 
 ## Installation
 
@@ -24,6 +25,7 @@ view with syntax highlighting.
 - [difftastic](https://github.com/Wilfred/difftastic) (`difft` command)
 - [jj](https://github.com/martinvonz/jj) or [git](https://git-scm.com/) version control
 - Rust toolchain (only if building from source)
+- [snacks.nvim](https://github.com/folke/snacks.nvim) (optional, only for `:DifftPick`)
 
 > [!WARNING]
 >
@@ -47,10 +49,17 @@ view with syntax highlighting.
 ```lua
 {
     "clabby/difftastic.nvim",
-    dependencies = { "MunifTanjim/nui.nvim" },
+    dependencies = {
+        "MunifTanjim/nui.nvim",
+        -- optional: only needed for :DifftPick
+        "folke/snacks.nvim",
+    },
     config = function()
         require("difftastic-nvim").setup({
             download = true, -- Auto-download pre-built binary
+            snacks_picker = {
+                enabled = true,
+            },
         })
     end,
 }
@@ -81,6 +90,8 @@ Requires a Rust toolchain. The plugin automatically builds from source on first 
 | `:Difft` | Open diff view for unstaged changes (git) or uncommitted changes (jj) |
 | `:Difft --staged` | Open diff view for staged changes (git only) |
 | `:Difft <ref>` | Open diff view for a jj revset or git commit/range |
+| `:DifftPick` | Pick a jj revision or git commit using snacks.nvim (with preview) |
+| `:DifftPickRange` | Pick end revision, then pick a parent revision as range start |
 | `:DifftClose` | Close the diff view |
 | `:DifftUpdate` | Update to latest release (requires `download = true`) |
 
@@ -95,6 +106,9 @@ Requires a Rust toolchain. The plugin automatically builds from source on first 
 
 " Diff the parent of the current change
 :Difft @-
+
+" Diff a change-id prefix (equivalent to jj diff -r w)
+:Difft w
 
 " Diff a specific revision
 :Difft abc123
@@ -144,9 +158,14 @@ Filler lines (`╱╱╱`) indicate where content exists on one side but not the
 require("difftastic-nvim").setup({
     download = false,              -- Auto-download pre-built binary (default: false)
     vcs = "jj",                    -- "jj" (default) or "git"
-    hunk_wrap_file = false,        -- Next hunk at last hunk goes to next file
     highlight_mode = "treesitter", -- "treesitter" (default) or "difftastic"
-    scroll_to_first_hunk = false,  -- Auto-scroll to first hunk after opening a file (default: false)
+    hunk_wrap_file = true,          -- Next hunk at last hunk goes to next file
+    scroll_to_first_hunk = true,  -- Auto-scroll to first hunk after opening a file (default: true)
+    snacks_picker = {
+        enabled = false,          -- opt-in snacks.nvim integration (default: false)
+        limit = 200,              -- number of revisions/commits to list in :DifftPick
+        jj_log_revset = nil,      -- optional: jj revset for picker log (nil = omit -r and use jj default)
+    },
     keymaps = {
         next_file = "]f",
         prev_file = "[f",
@@ -210,6 +229,18 @@ Highlights automatically inherit from your colorscheme's semantic groups (`Added
 | `DifftFileAdded` | Links to `Added` | Added files |
 | `DifftFileDeleted` | Links to `Removed` | Deleted files |
 | `DifftTreeCurrent` | Derived from `Normal` | Current file highlight |
+
+**Picker**:
+
+| Group | Default | Description |
+|-------|---------|-------------|
+| `DifftPickerPreviewHover` | Derived from `Normal` | Hovered jj revision lines in picker preview |
+| `DifftPickerJjIconCurrent` | Links to `Added` | `@` icon in jj picker list |
+| `DifftPickerJjIconImmutable` | Links to `Removed` | `◆` icon in jj picker list |
+| `DifftPickerJjIconNormal` | Links to `Directory` | `○` icon in jj picker list |
+| `DifftPickerJjDesc` | Derived from `Normal` | Description text in jj picker list |
+| `DifftPickerJjRevset` | Links to `Identifier` | Change/revset id in jj picker list |
+| `DifftPickerJjAge` | Links to `Comment` | Age field in jj picker list |
 
 **Other**:
 
