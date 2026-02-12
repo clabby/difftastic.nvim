@@ -38,7 +38,7 @@
 
 use mlua::prelude::*;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -296,6 +296,88 @@ fn split_display_path(path: &Path) -> (PathBuf, PathBuf) {
     (path.to_path_buf(), path.to_path_buf())
 }
 
+fn parse_jj_summary_rename(line: &str) -> Option<(PathBuf, PathBuf)> {
+    let renamed = line.trim().strip_prefix("R ")?;
+    let (old_path, new_path) = split_display_path(Path::new(renamed));
+    (old_path != new_path).then_some((old_path, new_path))
+}
+
+fn parse_jj_summary_renames(output: &str) -> HashMap<PathBuf, PathBuf> {
+    output
+        .lines()
+        .filter_map(parse_jj_summary_rename)
+        .map(|(old_path, new_path)| (new_path, old_path))
+        .collect()
+}
+
+fn parse_git_name_status_rename(line: &str) -> Option<(PathBuf, PathBuf)> {
+    let mut parts = line.trim().split('\t');
+    let status = parts.next()?;
+    if !status.starts_with('R') {
+        return None;
+    }
+
+    let old_path = parts.next()?.trim();
+    let new_path = parts.next()?.trim();
+    if old_path.is_empty() || new_path.is_empty() {
+        return None;
+    }
+
+    Some((PathBuf::from(old_path), PathBuf::from(new_path)))
+}
+
+fn parse_git_name_status_renames(output: &str) -> HashMap<PathBuf, PathBuf> {
+    output
+        .lines()
+        .filter_map(parse_git_name_status_rename)
+        .map(|(old_path, new_path)| (new_path, old_path))
+        .collect()
+}
+
+fn git_rename_map(mode: &DiffMode) -> HashMap<PathBuf, PathBuf> {
+    let mut cmd = Command::new("git");
+    cmd.args(["diff", "--name-status", "-M"]);
+
+    match mode {
+        DiffMode::Range(range) => {
+            cmd.arg(range);
+        }
+        DiffMode::Unstaged => {}
+        DiffMode::Staged => {
+            cmd.arg("--cached");
+        }
+    }
+
+    let output = cmd.output().ok();
+    let Some(output) = output.filter(|o| o.status.success()) else {
+        return HashMap::new();
+    };
+
+    parse_git_name_status_renames(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn jj_rename_map(mode: &DiffMode) -> HashMap<PathBuf, PathBuf> {
+    let mut cmd = Command::new("jj");
+    cmd.arg("diff");
+
+    match mode {
+        DiffMode::Range(revset) => {
+            cmd.arg("-r").arg(revset);
+        }
+        DiffMode::Unstaged => {}
+        DiffMode::Staged => {
+            cmd.args(["-r", "@"]); // mirror staged fallback semantics in this plugin
+        }
+    }
+
+    let output = cmd.arg("--summary").output().ok();
+    let Some(output) = output.filter(|o| o.status.success()) else {
+        return HashMap::new();
+    };
+
+    parse_jj_summary_renames(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// Parses a git commit range into `(old_commit, new_commit)` references.
 ///
 /// Handles single commits, `A..B` ranges, and `A...B` (merge-base) ranges.
@@ -366,17 +448,26 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
     };
 
     // Process files based on mode and VCS
-    let display_files: Vec<_> = match (&mode, vcs) {
+    let mut display_files: Vec<_> = match (&mode, vcs) {
         (DiffMode::Range(range), "git") => {
             let (old_ref, new_ref) = parse_git_range(range);
             files
                 .into_par_iter()
-                .map(|file| {
+                .map(|mut file| {
                     let file_stats = stats.get(&file.path).copied();
                     let (old_path, new_path) = split_display_path(&file.path);
+                    let moved_from = if old_path != new_path {
+                        file.path = new_path.clone();
+                        file.status = difftastic::Status::Created;
+                        Some(old_path.clone())
+                    } else {
+                        None
+                    };
                     let old_lines = into_lines(git_file_content(&old_ref, &old_path));
                     let new_lines = into_lines(git_file_content(&new_ref, &new_path));
-                    processor::process_file(file, old_lines, new_lines, file_stats)
+                    let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+                    display.moved_from = moved_from;
+                    display
                 })
                 .collect()
         }
@@ -385,56 +476,126 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             let new_ref = format!("heads({range})");
             files
                 .into_par_iter()
-                .map(|file| {
+                .map(|mut file| {
                     let file_stats = stats.get(&file.path).copied();
                     let (old_path, new_path) = split_display_path(&file.path);
+                    let moved_from = if old_path != new_path {
+                        file.path = new_path.clone();
+                        file.status = difftastic::Status::Created;
+                        Some(old_path.clone())
+                    } else {
+                        None
+                    };
                     let old_lines = into_lines(jj_file_content(&old_ref, &old_path));
                     let new_lines = into_lines(jj_file_content(&new_ref, &new_path));
-                    processor::process_file(file, old_lines, new_lines, file_stats)
+                    let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+                    display.moved_from = moved_from;
+                    display
                 })
                 .collect()
         }
         (DiffMode::Unstaged, "git") => files
             .into_par_iter()
-            .map(|file| {
+            .map(|mut file| {
                 let file_stats = stats.get(&file.path).copied();
                 let (old_path, new_path) = split_display_path(&file.path);
+                let moved_from = if old_path != new_path {
+                    file.path = new_path.clone();
+                    file.status = difftastic::Status::Created;
+                    Some(old_path.clone())
+                } else {
+                    None
+                };
                 let old_lines = into_lines(git_index_content(&old_path));
                 let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "git"));
-                processor::process_file(file, old_lines, new_lines, file_stats)
+                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+                display.moved_from = moved_from;
+                display
             })
             .collect(),
         (DiffMode::Unstaged, _) => files
             .into_par_iter()
-            .map(|file| {
+            .map(|mut file| {
                 let file_stats = stats.get(&file.path).copied();
                 let (old_path, new_path) = split_display_path(&file.path);
+                let moved_from = if old_path != new_path {
+                    file.path = new_path.clone();
+                    file.status = difftastic::Status::Created;
+                    Some(old_path.clone())
+                } else {
+                    None
+                };
                 let old_lines = into_lines(jj_file_content("@", &old_path));
                 let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
-                processor::process_file(file, old_lines, new_lines, file_stats)
+                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+                display.moved_from = moved_from;
+                display
             })
             .collect(),
         (DiffMode::Staged, "git") => files
             .into_par_iter()
-            .map(|file| {
+            .map(|mut file| {
                 let file_stats = stats.get(&file.path).copied();
                 let (old_path, new_path) = split_display_path(&file.path);
+                let moved_from = if old_path != new_path {
+                    file.path = new_path.clone();
+                    file.status = difftastic::Status::Created;
+                    Some(old_path.clone())
+                } else {
+                    None
+                };
                 let old_lines = into_lines(git_file_content("HEAD", &old_path));
                 let new_lines = into_lines(git_index_content(&new_path));
-                processor::process_file(file, old_lines, new_lines, file_stats)
+                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+                display.moved_from = moved_from;
+                display
             })
             .collect(),
         (DiffMode::Staged, _) => files
             .into_par_iter()
-            .map(|file| {
+            .map(|mut file| {
                 let file_stats = stats.get(&file.path).copied();
                 let (old_path, new_path) = split_display_path(&file.path);
+                let moved_from = if old_path != new_path {
+                    file.path = new_path.clone();
+                    file.status = difftastic::Status::Created;
+                    Some(old_path.clone())
+                } else {
+                    None
+                };
                 let old_lines = into_lines(jj_file_content("@-", &old_path));
                 let new_lines = into_lines(jj_file_content("@", &new_path));
-                processor::process_file(file, old_lines, new_lines, file_stats)
+                let mut display = processor::process_file(file, old_lines, new_lines, file_stats);
+                display.moved_from = moved_from;
+                display
             })
             .collect(),
     };
+
+    let renames = if vcs == "git" {
+        git_rename_map(&mode)
+    } else {
+        jj_rename_map(&mode)
+    };
+    if !renames.is_empty() {
+        let old_paths: HashSet<PathBuf> = renames.values().cloned().collect();
+
+        display_files = display_files
+            .into_iter()
+            .filter_map(|mut file| {
+                if let Some(old_path) = renames.get(&file.path) {
+                    file.moved_from = Some(old_path.clone());
+                    file.status = difftastic::Status::Created;
+                }
+
+                if file.status == difftastic::Status::Deleted && old_paths.contains(&file.path) {
+                    return None;
+                }
+
+                Some(file)
+            })
+            .collect();
+    }
 
     let files_table = lua.create_table()?;
     for (i, file) in display_files.into_iter().enumerate() {
@@ -542,5 +703,40 @@ mod tests {
         let (old, new) = split_display_path(Path::new("src/{old => new}.rs"));
         assert_eq!(old, PathBuf::from("src/old.rs"));
         assert_eq!(new, PathBuf::from("src/new.rs"));
+    }
+
+    #[test]
+    fn test_parse_jj_summary_rename_simple() {
+        let parsed = parse_jj_summary_rename("R src/old.rs => src/new.rs").unwrap();
+        assert_eq!(parsed.0, PathBuf::from("src/old.rs"));
+        assert_eq!(parsed.1, PathBuf::from("src/new.rs"));
+    }
+
+    #[test]
+    fn test_parse_jj_summary_rename_brace() {
+        let parsed = parse_jj_summary_rename("R src/{old => new}.rs").unwrap();
+        assert_eq!(parsed.0, PathBuf::from("src/old.rs"));
+        assert_eq!(parsed.1, PathBuf::from("src/new.rs"));
+    }
+
+    #[test]
+    fn test_parse_jj_summary_renames_map() {
+        let renames = parse_jj_summary_renames("R a.txt => b.txt\nA c.txt\n");
+        assert_eq!(renames.get(Path::new("b.txt")), Some(&PathBuf::from("a.txt")));
+        assert!(renames.get(Path::new("c.txt")).is_none());
+    }
+
+    #[test]
+    fn test_parse_git_name_status_rename() {
+        let parsed = parse_git_name_status_rename("R100\tsrc/old.rs\tsrc/new.rs").unwrap();
+        assert_eq!(parsed.0, PathBuf::from("src/old.rs"));
+        assert_eq!(parsed.1, PathBuf::from("src/new.rs"));
+    }
+
+    #[test]
+    fn test_parse_git_name_status_renames_map() {
+        let renames = parse_git_name_status_renames("R090\ta.txt\tb.txt\nM c.txt\n");
+        assert_eq!(renames.get(Path::new("b.txt")), Some(&PathBuf::from("a.txt")));
+        assert!(renames.get(Path::new("c.txt")).is_none());
     }
 }

@@ -155,6 +155,12 @@ pub struct Row {
 pub struct DisplayFile {
     pub path: PathBuf,
 
+    /// Original path for moved/renamed files, if any.
+    ///
+    /// When present, `path` is the destination (new path) and `moved_from`
+    /// is the source (old path).
+    pub moved_from: Option<PathBuf>,
+
     /// The detected programming language.
     pub language: String,
 
@@ -231,6 +237,7 @@ fn process_created(
 
     DisplayFile {
         path: file.path,
+        moved_from: None,
         language: file.language,
         status: file.status,
         additions,
@@ -268,6 +275,7 @@ fn process_deleted(
 
     DisplayFile {
         path: file.path,
+        moved_from: None,
         language: file.language,
         status: file.status,
         additions,
@@ -372,6 +380,7 @@ fn process_changed(
 
     DisplayFile {
         path: file.path,
+        moved_from: None,
         language: file.language,
         status: file.status,
         additions,
@@ -515,6 +524,12 @@ impl IntoLua for DisplayFile {
     fn into_lua(self, lua: &Lua) -> LuaResult<LuaValue> {
         let table = lua.create_table()?;
         table.set("path", self.path.to_string_lossy().as_ref())?;
+        table.set(
+            "moved_from",
+            self.moved_from
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+        )?;
         table.set("language", self.language)?;
         table.set(
             "status",

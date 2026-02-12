@@ -90,6 +90,7 @@ local function build_intermediate_tree(files)
                 node.status = file.status
                 node.additions = file.additions or 0
                 node.deletions = file.deletions or 0
+                node.moved_from = file.moved_from
             end
         end
     end
@@ -157,6 +158,7 @@ local function convert_to_nui_nodes(node, file_to_node_id)
             status = child.status,
             additions = child.additions,
             deletions = child.deletions,
+            moved_from = child.moved_from,
         }, grandchildren)
 
         if child.file_idx then
@@ -192,7 +194,13 @@ local function prepare_node(node)
     line:append(icon .. " ", icon_hl)
 
     -- Name
-    line:append(node.name)
+    if node.moved_from then
+        line:append(node.moved_from, "DifftFileDeleted")
+        line:append(" -> ")
+        line:append(node.path, "DifftFileAdded")
+    else
+        line:append(node.name)
+    end
 
     if node.status == "created" then
         line:append(" ")
