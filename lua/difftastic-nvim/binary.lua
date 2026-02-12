@@ -311,7 +311,8 @@ function M.get()
     local _, ext = get_platform()
     local paths = get_paths()
 
-    cached_lib = try_load_lib(paths.data_dir, ext) or try_load_lib(paths.release_dir, ext)
+    -- Prefer local development build in target/release over downloaded binary.
+    cached_lib = try_load_lib(paths.release_dir, ext) or try_load_lib(paths.data_dir, ext)
 
     if cached_lib then
         return cached_lib
