@@ -332,13 +332,8 @@ function M.goto_file()
 
     local filepath = file.path
 
-    -- Switch to original tabpage or create new one
-    local target_tab = state.original_tabpage
-    if target_tab and vim.api.nvim_tabpage_is_valid(target_tab) then
-        vim.api.nvim_set_current_tabpage(target_tab)
-    else
-        vim.cmd("tabnew")
-    end
+    -- Close diff view (switches to original tab, closes diff tab)
+    M.close()
 
     -- Open file and jump to line and column
     vim.cmd("edit " .. vim.fn.fnameescape(filepath))
