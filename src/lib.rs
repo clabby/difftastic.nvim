@@ -556,7 +556,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .map(|mut file| {
                 let (file_stats, old_path, new_path, moved_from) =
                     prepare_file_for_display(&mut file, &stats);
-                let old_lines = into_lines(jj_file_content("@", &old_path));
+                let old_lines = into_lines(jj_file_content("@-", &old_path));
                 let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
                 process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
