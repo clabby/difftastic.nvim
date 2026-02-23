@@ -55,10 +55,14 @@ fn into_lines(content: Option<String>) -> Vec<String> {
 
 /// Fetches file content from jj at a specific revision via `jj file show`.
 /// Returns `None` if the command fails or the file doesn't exist.
-fn jj_file_content(revset: &str, path: &Path) -> Option<String> {
+///
+/// Paths from difftastic are relative to the repo root, so the command
+/// must run from the repo root for `jj file show` to resolve them correctly.
+fn jj_file_content(root: &Path, revset: &str, path: &Path) -> Option<String> {
     Command::new("jj")
         .args(["file", "show", "-r", revset])
         .arg(path)
+        .current_dir(root)
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -512,6 +516,10 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
         }
     };
 
+    // Compute VCS root once for jj file content lookups (paths from difftastic
+    // are repo-root-relative, but jj file show resolves relative to CWD).
+    let vcs_root = if vcs != "git" { jj_root() } else { git_root() };
+
     // Process files based on mode and VCS
     let mut display_files: Vec<_> = match (&mode, vcs) {
         (DiffMode::Range(range), "git") => {
@@ -528,6 +536,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .collect()
         }
         (DiffMode::Range(range), _) => {
+            let root = vcs_root.as_deref().unwrap_or(Path::new("."));
             let (old_ref, new_ref) = parse_jj_range(range)
                 .unwrap_or_else(|| (format!("roots({range})-"), format!("heads({range})")));
             files
@@ -535,8 +544,8 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .map(|mut file| {
                     let (file_stats, old_path, new_path, moved_from) =
                         prepare_file_for_display(&mut file, &stats);
-                    let old_lines = into_lines(jj_file_content(&old_ref, &old_path));
-                    let new_lines = into_lines(jj_file_content(&new_ref, &new_path));
+                    let old_lines = into_lines(jj_file_content(root, &old_ref, &old_path));
+                    let new_lines = into_lines(jj_file_content(root, &new_ref, &new_path));
                     process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
                 })
                 .collect()
@@ -551,16 +560,19 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
             .collect(),
-        (DiffMode::Unstaged, _) => files
-            .into_par_iter()
-            .map(|mut file| {
-                let (file_stats, old_path, new_path, moved_from) =
-                    prepare_file_for_display(&mut file, &stats);
-                let old_lines = into_lines(jj_file_content("@", &old_path));
-                let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
-                process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
-            })
-            .collect(),
+        (DiffMode::Unstaged, _) => {
+            let root = vcs_root.as_deref().unwrap_or(Path::new("."));
+            files
+                .into_par_iter()
+                .map(|mut file| {
+                    let (file_stats, old_path, new_path, moved_from) =
+                        prepare_file_for_display(&mut file, &stats);
+                    let old_lines = into_lines(jj_file_content(root, "@", &old_path));
+                    let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
+                    process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
+                })
+                .collect()
+        }
         (DiffMode::Staged, "git") => files
             .into_par_iter()
             .map(|mut file| {
@@ -571,16 +583,19 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
             })
             .collect(),
-        (DiffMode::Staged, _) => files
-            .into_par_iter()
-            .map(|mut file| {
-                let (file_stats, old_path, new_path, moved_from) =
-                    prepare_file_for_display(&mut file, &stats);
-                let old_lines = into_lines(jj_file_content("@-", &old_path));
-                let new_lines = into_lines(jj_file_content("@", &new_path));
-                process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
-            })
-            .collect(),
+        (DiffMode::Staged, _) => {
+            let root = vcs_root.as_deref().unwrap_or(Path::new("."));
+            files
+                .into_par_iter()
+                .map(|mut file| {
+                    let (file_stats, old_path, new_path, moved_from) =
+                        prepare_file_for_display(&mut file, &stats);
+                    let old_lines = into_lines(jj_file_content(root, "@-", &old_path));
+                    let new_lines = into_lines(jj_file_content(root, "@", &new_path));
+                    process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
+                })
+                .collect()
+        }
     };
 
     let renames = if vcs == "git" {
