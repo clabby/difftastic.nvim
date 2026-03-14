@@ -2,7 +2,7 @@
 local M = {}
 
 --- Default opacity for background highlights (0-1)
-M.bg_opacity = 0.25
+M.bg_opacity = 0.3
 
 --- Blend two colors with a given alpha.
 --- @param fg string Foreground hex color (e.g., "#ff0000")
@@ -49,10 +49,6 @@ end
 --- Linked highlight definitions (inherit from colorscheme)
 --- @type table<string, vim.api.keyset.highlight>
 M.linked = {
-    -- Foreground highlights (link to semantic groups)
-    DifftAddedFg = { link = "Added" },
-    DifftRemovedFg = { link = "Removed" },
-
     -- Tree highlights
     DifftFileAdded = { link = "Added" },
     DifftFileDeleted = { link = "Removed" },
@@ -94,8 +90,8 @@ local function apply_highlights(overrides)
         DifftPickerPreviewHover = { bg = normal_blend, bold = true },
         DifftPickerJjDesc = { fg = normal_fg },
         -- Foreground highlights
-        DifftAddedInlineFg = { fg = added_fg, bold = true },
-        DifftRemovedInlineFg = { fg = removed_fg, bold = true },
+        DifftAddedFg = { fg = added_fg, bold = true },
+        DifftRemovedFg = { fg = removed_fg, bold = true },
         DifftFiller = { fg = normal_blend },
     }
 

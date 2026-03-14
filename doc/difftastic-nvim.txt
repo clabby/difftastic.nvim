@@ -281,7 +281,7 @@ Tree options:
 Highlights automatically inherit from your colorscheme's semantic groups
 (`Added`, `Removed`, `Directory`, `Normal`) and update when you switch
 themes. Background colors are derived by blending the foreground color
-with your `Normal` background at 25% opacity.
+with your `Normal` background at 30% opacity.
 
 Treesitter mode (background colors):
     Group                 Default                 Description ~
@@ -289,10 +289,8 @@ Treesitter mode (background colors):
     DifftRemoved          Derived from `Removed`  Removed lines background
 
 Difftastic mode (foreground colors):
-    DifftAddedFg          Links to `Added`        Added text
-    DifftRemovedFg        Links to `Removed`      Removed text
-    DifftAddedInlineFg    `Added` + bold          Inline added text
-    DifftRemovedInlineFg  `Removed` + bold        Inline removed text
+    DifftAddedFg    `Added` + bold          Added text
+    DifftRemovedFg  `Removed` + bold        Removed text
 
 Tree highlights:
     DifftDirectory        Links to `Directory`    Directory names

@@ -203,7 +203,7 @@ The `highlight_mode` option controls how syntax highlighting is applied:
 
 ## Highlight Groups
 
-Highlights automatically inherit from your colorscheme's semantic groups (`Added`, `Removed`, `Directory`, `Normal`) and update when you switch themes. Background colors are derived by blending the foreground color with your `Normal` background at 25% opacity.
+Highlights automatically inherit from your colorscheme's semantic groups (`Added`, `Removed`, `Directory`, `Normal`) and update when you switch themes. Background colors are derived by blending the foreground color with your `Normal` background at 30% opacity.
 
 **Treesitter mode** (background colors):
 
@@ -216,10 +216,8 @@ Highlights automatically inherit from your colorscheme's semantic groups (`Added
 
 | Group | Default | Description |
 |-------|---------|-------------|
-| `DifftAddedFg` | Links to `Added` | Added text |
-| `DifftRemovedFg` | Links to `Removed` | Removed text |
-| `DifftAddedInlineFg` | `Added` + bold | Inline added text |
-| `DifftRemovedInlineFg` | `Removed` + bold | Inline removed text |
+| `DifftAddedFg` | `Added` + bold | Added text |
+| `DifftRemovedFg` | `Removed` + bold | Removed text |
 
 **Tree**:
 
