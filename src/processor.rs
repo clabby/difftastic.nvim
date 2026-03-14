@@ -49,17 +49,6 @@ pub struct HighlightRegion {
 }
 
 impl HighlightRegion {
-    /// Creates a highlight region that spans the entire line.
-    ///
-    /// This is used for lines that are entirely new (additions) or
-    /// entirely removed (deletions), where highlighting the full line
-    /// provides better visual feedback than highlighting specific ranges.
-    #[inline]
-    #[must_use]
-    fn full_line() -> Self {
-        Self { start: 0, end: -1 }
-    }
-
     /// Creates a highlight region for a specific column range.
     #[inline]
     #[must_use]
@@ -123,11 +112,8 @@ impl Side {
     #[inline]
     #[must_use]
     fn with_full_highlight(content: String) -> Self {
-        Self::new(
-            content,
-            false,
-            smallvec::smallvec![HighlightRegion::full_line()],
-        )
+        let hl = non_whitespace_span(&content);
+        Self::new(content, false, smallvec::smallvec![hl])
     }
 }
 
@@ -403,10 +389,10 @@ fn compute_highlights(content: &str, changes: &[Change]) -> Highlights {
         return Highlights::new();
     }
 
-    // If a single change covers the entire line, use full-line highlight
+    // If a single change covers the entire line, highlight from first to last non-whitespace
     let len = content.len() as u32;
     if changes.len() == 1 && changes[0].start == 0 && changes[0].end >= len {
-        return smallvec::smallvec![HighlightRegion::full_line()];
+        return smallvec::smallvec![non_whitespace_span(content)];
     }
 
     // Sort and merge adjacent regions (merging across whitespace gaps)
@@ -414,9 +400,9 @@ fn compute_highlights(content: &str, changes: &[Change]) -> Highlights {
     regions.sort_unstable_by_key(|r| r.0);
     let merged = merge_regions(&regions, content.as_bytes());
 
-    // If merged regions cover all non-whitespace, use full-line highlight
+    // If merged regions cover all non-whitespace, highlight from first to last non-whitespace
     if covers_all_non_whitespace(content, &merged) {
-        return smallvec::smallvec![HighlightRegion::full_line()];
+        return smallvec::smallvec![non_whitespace_span(content)];
     }
 
     // Return the individual regions
@@ -424,6 +410,21 @@ fn compute_highlights(content: &str, changes: &[Change]) -> Highlights {
         .into_iter()
         .map(|(start, end)| HighlightRegion::columns(start, end))
         .collect()
+}
+
+/// Returns a highlight spanning from the first to last non-whitespace character.
+fn non_whitespace_span(content: &str) -> HighlightRegion {
+    let first = content
+        .bytes()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(0) as u32;
+    let last = content.len() as u32
+        - content
+            .bytes()
+            .rev()
+            .position(|b| !b.is_ascii_whitespace())
+            .unwrap_or(0) as u32;
+    HighlightRegion::columns(first, last)
 }
 
 /// Merges adjacent change regions, bridging gaps that contain only whitespace.
@@ -715,9 +716,19 @@ mod tests {
     }
 
     #[test]
-    fn highlight_full_coverage_is_full_line() {
+    fn highlight_full_coverage_spans_non_whitespace() {
         let highlights = compute_highlights("hello", &[change(0, 5)]);
-        assert_eq!(highlights[0].end, -1);
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, 0);
+        assert_eq!(highlights[0].end, 5);
+    }
+
+    #[test]
+    fn highlight_full_coverage_with_indent() {
+        let highlights = compute_highlights("  hello  ", &[change(0, 9)]);
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, 2);
+        assert_eq!(highlights[0].end, 7);
     }
 
     #[test]
@@ -731,7 +742,8 @@ mod tests {
     fn highlight_merges_across_whitespace() {
         let highlights = compute_highlights("foo bar", &[change(0, 3), change(4, 7)]);
         assert_eq!(highlights.len(), 1);
-        assert_eq!(highlights[0].end, -1); // merged to full line
+        assert_eq!(highlights[0].start, 0);
+        assert_eq!(highlights[0].end, 7); // merged to span all non-whitespace
     }
 
     #[test]
