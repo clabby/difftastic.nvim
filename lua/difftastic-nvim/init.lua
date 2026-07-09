@@ -47,6 +47,8 @@ M.config = {
 M.state = {
     current_file_idx = 1,
     files = {},
+    range_label = nil,
+    range_kind = nil,
     tree_win = nil,
     tree_buf = nil,
     left_win = nil,
@@ -56,6 +58,38 @@ M.state = {
     original_tabpage = nil,
     diff_tabpage = nil,
 }
+
+local function git_range_label(revset)
+    if revset == nil then
+        return "index → worktree"
+    end
+    if revset == "--staged" then
+        return "HEAD → index"
+    end
+
+    if revset:find("...", 1, true) then
+        local base, head = revset:match("^(.-)%.%.%.(.*)$")
+        return (base or "") .. " … " .. (head or "")
+    end
+
+    if revset:find("..", 1, true) then
+        local base, head = revset:match("^(.-)%.%.(.*)$")
+        return (base or "") .. " → " .. (head or "")
+    end
+
+    return revset .. "^ → " .. revset
+end
+
+local function range_context(revset, vcs)
+    if vcs == "git" then
+        return "Base/Head", git_range_label(revset)
+    end
+
+    if revset == nil or revset == "--staged" then
+        return "Revset", "@"
+    end
+    return "Revset", revset
+end
 
 --- Initialize the plugin with user options.
 --- @param opts table|nil User configuration
@@ -123,6 +157,7 @@ function M.open(revset)
 
     M.state.files = result.files
     M.state.current_file_idx = 1
+    M.state.range_kind, M.state.range_label = range_context(revset, M.config.vcs)
 
     -- Store original tabpage and create new one for diff view
     M.state.original_tabpage = vim.api.nvim_get_current_tabpage()
@@ -148,6 +183,8 @@ function M.close()
     M.state = {
         current_file_idx = 1,
         files = {},
+        range_label = nil,
+        range_kind = nil,
         tree_win = nil,
         tree_buf = nil,
         left_win = nil,

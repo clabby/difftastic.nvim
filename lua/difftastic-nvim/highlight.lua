@@ -54,6 +54,12 @@ M.linked = {
     DifftFileAdded = { link = "Added" },
     DifftFileDeleted = { link = "Removed" },
     DifftDirectory = { link = "Directory" },
+    DifftTreeDirectory = { link = "Directory" },
+    DifftTreeAdded = { link = "Added" },
+    DifftTreeDeleted = { link = "Removed" },
+    DifftTreeModified = { link = "Changed" },
+    DifftTreeRenamed = { link = "Directory" },
+    DifftTreeRange = { link = "BlueItalic" },
 
     -- Picker text highlights
     DifftPickerJjIconCurrent = { link = "Added" },
@@ -76,14 +82,18 @@ local function apply_highlights(overrides)
     -- Setup derived highlights
     local normal_bg = get_normal_bg()
     local normal_fg = get_fg("Normal") or "#c0caf5"
+    local comment_fg = get_fg("Comment") or "#565f89"
     local added_fg = get_fg("Added") or "#9ece6a"
     local removed_fg = get_fg("Removed") or "#f7768e"
+    local changed_fg = get_fg("Changed") or get_fg("Identifier") or "#7aa2f7"
 
     local added_bg = blend(added_fg, normal_bg, M.bg_opacity)
     local removed_bg = blend(removed_fg, normal_bg, M.bg_opacity)
     local added_line_bg = blend(added_fg, normal_bg, M.line_bg_opacity)
     local removed_line_bg = blend(removed_fg, normal_bg, M.line_bg_opacity)
     local normal_blend = blend(normal_fg, normal_bg, M.bg_opacity)
+    local tree_cursor_bg = blend(normal_fg, normal_bg, 0.14)
+    local tree_panel_bg = blend(normal_fg, normal_bg, 0.03)
 
     local derived = {
         -- Background highlights (blended from fg colors)
@@ -92,6 +102,18 @@ local function apply_highlights(overrides)
         DifftAddedLine = { bg = added_line_bg },
         DifftRemovedLine = { bg = removed_line_bg },
         DifftTreeCurrent = { bg = normal_blend, bold = true },
+        DifftTreeNormal = { bg = tree_panel_bg },
+        DifftTreeCursorLine = { bg = tree_cursor_bg },
+        DifftTreeEndOfBuffer = { fg = tree_panel_bg, bg = tree_panel_bg },
+        DifftTreeTitle = { fg = normal_fg, bold = true },
+        DifftTreeDivider = { fg = comment_fg },
+        DifftTreeMuted = { fg = comment_fg },
+        DifftTreeIndent = { fg = comment_fg },
+        DifftTreeChevron = { fg = comment_fg },
+        DifftTreeFile = { fg = normal_fg },
+        DifftTreePathMuted = { fg = comment_fg },
+        DifftTreeRange = { fg = changed_fg, italic = true },
+        DifftTreeModified = { fg = changed_fg, bold = true },
         DifftPickerPreviewHover = { bg = normal_blend, bold = true },
         DifftPickerJjDesc = { fg = normal_fg },
         -- Foreground highlights

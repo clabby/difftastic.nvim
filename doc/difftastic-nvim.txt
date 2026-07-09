@@ -297,8 +297,22 @@ Difftastic mode (foreground colors):
 
 Tree highlights:
     DifftDirectory        Links to `Directory`    Directory names
+    DifftTreeDirectory    Links to `Directory`    Directory labels in the tree
+    DifftTreeFile         Derived from `Normal`   File names in the tree
     DifftFileAdded        Links to `Added`        Added files
     DifftFileDeleted      Links to `Removed`      Deleted files
+    DifftTreeAdded        Links to `Added`        Added status marker
+    DifftTreeDeleted      Links to `Removed`      Deleted status marker
+    DifftTreeModified     Derived from `Changed`  Modified status marker
+    DifftTreeRenamed      Links to `Directory`    Renamed status marker
+    DifftTreeMuted        Derived from `Comment`  Tree hints and separators
+    DifftTreeIndent       Derived from `Comment`  Tree indent guide
+    DifftTreeChevron      Derived from `Comment`  Directory expand/collapse chevron
+    DifftTreeTitle        Derived from `Normal`   Tree header title
+    DifftTreeDivider      Derived from `Comment`  Tree header divider
+    DifftTreeRange        Links to `BlueItalic`   Tree header revset/base-head value
+    DifftTreeNormal       Derived from `Normal`   Tree panel background
+    DifftTreeCursorLine   Derived from `Normal`   Tree cursorline background
     DifftTreeCurrent      Derived from `Normal`   Current file highlight
 
 Picker highlights:

@@ -7,6 +7,17 @@ local NuiLine = require("nui.line")
 local DEFAULT_ICON = ""
 local has_devicons, devicons = pcall(require, "nvim-web-devicons")
 
+local GLYPHS = {
+    branch = "│ ",
+    expanded = "",
+    collapsed = "",
+    file = "  ",
+    added = "+",
+    deleted = "-",
+    changed = "●",
+    renamed = "➜",
+}
+
 --- Module state
 --- @type table|nil
 M.tree = nil
@@ -18,8 +29,8 @@ M.current_file_idx = nil
 M.total_additions = 0
 --- @type number
 M.total_deletions = 0
---- Number of header lines (blank + summary + blank)
-M.header_lines = 3
+--- Number of header lines (title + summary + range + divider)
+M.header_lines = 4
 
 --- @return table Tree configuration
 local function get_config()
@@ -37,6 +48,94 @@ local function get_file_icon(filename)
         return icon or DEFAULT_ICON, hl
     end
     return DEFAULT_ICON, nil
+end
+
+local function status_icon(node)
+    if node.moved_from then
+        return GLYPHS.renamed, "DifftTreeRenamed"
+    end
+    if node.status == "created" then
+        return GLYPHS.added, "DifftTreeAdded"
+    end
+    if node.status == "deleted" then
+        return GLYPHS.deleted, "DifftTreeDeleted"
+    end
+    if node.additions > 0 or node.deletions > 0 then
+        return GLYPHS.changed, "DifftTreeModified"
+    end
+    return " ", "DifftTreeMuted"
+end
+
+local function append_stat_chip(line, additions, deletions)
+    if additions == 0 and deletions == 0 then
+        return
+    end
+
+    line:append("  ", "DifftTreeMuted")
+    if additions > 0 then
+        line:append("+" .. additions, "DifftFileAdded")
+    end
+    if additions > 0 and deletions > 0 then
+        line:append(" ", "DifftTreeMuted")
+    end
+    if deletions > 0 then
+        line:append("-" .. deletions, "DifftFileDeleted")
+    end
+end
+
+local function display_width(text)
+    return vim.fn.strdisplaywidth(text)
+end
+
+local function pad_to_width(text, width)
+    return text .. string.rep(" ", math.max(0, width - display_width(text)))
+end
+
+local function trim_to_width(text, width)
+    if width <= 0 then
+        return ""
+    end
+
+    if display_width(text) <= width then
+        return text
+    end
+
+    local ellipsis = "…"
+    local limit = math.max(0, width - display_width(ellipsis))
+    local result = vim.fn.strcharpart(text, 0, limit)
+
+    while display_width(result .. ellipsis) > width do
+        result = vim.fn.strcharpart(result, 0, math.max(0, vim.fn.strchars(result) - 1))
+    end
+
+    return result .. ellipsis
+end
+
+local function fit_header_row(left, right, width)
+    local gap = width - display_width(left) - display_width(right)
+    if gap < 1 then
+        local right_width = math.max(0, width - display_width(left) - 1)
+        if right_width > 0 then
+            return fit_header_row(left, trim_to_width(right, right_width), width)
+        end
+        return pad_to_width(trim_to_width(left, width), width)
+    end
+
+    return left .. string.rep(" ", gap) .. right
+end
+
+local function header_border(width, title)
+    local title_text = title and (" " .. title .. " ") or ""
+    local inner_width = math.max(0, width - 2)
+    local title_width = display_width(title_text)
+
+    if title_width == 0 or title_width >= inner_width then
+        return "╭" .. string.rep("─", inner_width) .. "╮"
+    end
+
+    local left = math.floor((inner_width - title_width) / 2)
+    local right = inner_width - title_width - left
+    return "╭" .. string.rep("─", left) .. title_text .. string.rep("─", right) .. "╮"
 end
 
 --- Build an intermediate tree structure from flat file list.
@@ -180,10 +279,20 @@ local function prepare_node(node)
     local line = NuiLine()
     local depth = node:get_depth()
 
-    -- Indentation
-    line:append(string.rep("  ", depth - 1))
+    for _ = 1, depth - 1 do
+        line:append(GLYPHS.branch, "DifftTreeIndent")
+    end
 
-    -- Icon
+    if node.is_dir then
+        line:append(node:is_expanded() and GLYPHS.expanded or GLYPHS.collapsed, "DifftTreeChevron")
+        line:append(" ", "DifftTreeMuted")
+    else
+        line:append(GLYPHS.file, "DifftTreeMuted")
+    end
+
+    local marker, marker_hl = status_icon(node)
+    line:append(marker .. " ", marker_hl)
+
     local icon, icon_hl
     if node.is_dir then
         icon = node:is_expanded() and cfg.icons.dir_open or cfg.icons.dir_closed
@@ -193,33 +302,17 @@ local function prepare_node(node)
     end
     line:append(icon .. " ", icon_hl)
 
-    -- Name
     if node.moved_from then
-        line:append(node.moved_from, "DifftFileDeleted")
-        line:append(" -> ")
-        line:append(node.path, "DifftFileAdded")
+        line:append(node.moved_from, "DifftTreePathMuted")
+        line:append(" → ", "DifftTreeMuted")
+        line:append(node.name, "DifftFileAdded")
+    elseif node.is_dir then
+        line:append(node.name, "DifftTreeDirectory")
     else
-        line:append(node.name)
+        line:append(node.name, "DifftTreeFile")
     end
 
-    if node.status == "created" then
-        line:append(" ")
-        line:append("[NEW]", "DifftFileAdded")
-    end
-
-    -- Stats
-    if node.additions > 0 or node.deletions > 0 then
-        line:append(" ")
-        if node.additions > 0 then
-            line:append("+" .. node.additions, "DifftFileAdded")
-            if node.deletions > 0 then
-                line:append(" ")
-            end
-        end
-        if node.deletions > 0 then
-            line:append("-" .. node.deletions, "DifftFileDeleted")
-        end
-    end
+    append_stat_chip(line, node.additions, node.deletions)
 
     return line
 end
@@ -231,26 +324,66 @@ end
 local function render_header(state, total_add, total_del)
     local width = get_config().width
 
-    -- Format: "Additions: N | Deletions: M"
-    local add_label, del_label = "Additions: ", "Deletions: "
-    local separator = " | "
-    local stats = add_label .. total_add .. separator .. del_label .. total_del
-
-    -- Center the stats
-    local padding = math.floor((width - #stats) / 2)
-    local header_line = string.rep(" ", math.max(0, padding)) .. stats
-
-    vim.api.nvim_buf_set_lines(state.tree_buf, 0, 0, false, { "", header_line, "" })
-
-    -- Apply highlights to the numbers only (on line index 1, the middle line)
     local ns = vim.api.nvim_create_namespace("difft-tree-header")
-    local add_num_start = padding + #add_label
-    local add_num_end = add_num_start + #tostring(total_add)
-    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftFileAdded", 1, add_num_start, add_num_end)
+    vim.api.nvim_buf_clear_namespace(state.tree_buf, ns, 0, M.header_lines)
 
-    local del_num_start = padding + #add_label + #tostring(total_add) + #separator + #del_label
-    local del_num_end = del_num_start + #tostring(total_del)
-    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftFileDeleted", 1, del_num_start, del_num_end)
+    local file_count = #(state.files or {})
+    local file_label = file_count == 1 and "1 file" or (file_count .. " files")
+
+    local add_text = "+" .. total_add
+    local del_text = "-" .. total_del
+    local stat_text = add_text .. "  " .. del_text
+    local inner_width = math.max(0, width - 4)
+    local stats_inner = fit_header_row(file_label, stat_text, inner_width)
+    local range_kind = state.range_kind or "Range"
+    local range_text = state.range_label or ""
+    local range_value_width = math.max(0, inner_width - display_width(range_kind) - 1)
+    local range_display = range_value_width > 0 and trim_to_width(range_text, range_value_width) or ""
+    local range_inner = fit_header_row(range_kind, range_display, inner_width)
+
+    local top_line = header_border(width, "Difftastic")
+    local stats_line = "│ " .. stats_inner .. " │"
+    local range_line = "│ " .. range_inner .. " │"
+    local bottom_line = "╰" .. string.rep("─", math.max(0, width - 2)) .. "╯"
+
+    vim.api.nvim_buf_set_lines(state.tree_buf, 0, 0, false, { top_line, stats_line, range_line, bottom_line })
+
+    local title_start = top_line:find("Difftastic", 1, true)
+    if title_start then
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeDivider", 0, 0, -1)
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeTitle", 0, title_start - 1, title_start + #"Difftastic" - 1)
+    end
+
+    local left_border_end = #"│"
+    local content_start = #"│ "
+    local right_border_start = #stats_line - #"│"
+
+    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeDivider", 1, 0, left_border_end)
+    local file_label_col = stats_line:find(file_label, 1, true)
+    if file_label_col then
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeMuted", 1, file_label_col - 1, file_label_col + #file_label - 1)
+    end
+    local add_col = stats_line:find(add_text, 1, true)
+    if add_col then
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftFileAdded", 1, add_col - 1, add_col + #add_text - 1)
+    end
+    local del_col = stats_line:find(del_text, add_col and (add_col + #add_text) or 1, true)
+    if del_col then
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftFileDeleted", 1, del_col - 1, del_col + #del_text - 1)
+    end
+    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeDivider", 1, right_border_start, -1)
+    local range_right_border_start = #range_line - #"│"
+    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeDivider", 2, 0, left_border_end)
+    local range_kind_col = range_line:find(range_kind, 1, true)
+    if range_kind_col then
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeMuted", 2, range_kind_col - 1, range_kind_col + #range_kind - 1)
+    end
+    local range_value_col = range_display ~= "" and range_line:find(range_display, 1, true) or nil
+    if range_value_col then
+        vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeRange", 2, range_value_col - 1, #range_line - #" │")
+    end
+    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeDivider", 2, range_right_border_start, -1)
+    vim.api.nvim_buf_add_highlight(state.tree_buf, ns, "DifftTreeDivider", 3, 0, -1)
 end
 
 function M.open(state)
@@ -265,6 +398,14 @@ function M.open(state)
     vim.wo[state.tree_win].cursorline = true
     vim.wo[state.tree_win].scrollbind = false
     vim.wo[state.tree_win].cursorbind = false
+    vim.wo[state.tree_win].foldcolumn = "0"
+    vim.wo[state.tree_win].list = false
+    vim.wo[state.tree_win].winhl = table.concat({
+        "Normal:DifftTreeNormal",
+        "NormalNC:DifftTreeNormal",
+        "EndOfBuffer:DifftTreeEndOfBuffer",
+        "CursorLine:DifftTreeCursorLine",
+    }, ",")
 
     vim.bo[state.tree_buf].buftype = "nofile"
     vim.bo[state.tree_buf].bufhidden = "wipe"
