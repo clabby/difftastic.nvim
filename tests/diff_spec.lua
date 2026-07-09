@@ -273,6 +273,45 @@ describe("diff", function()
             assert.is_false(has_removed_range)
             assert.is_false(has_added_range)
         end)
+
+        it("renders diffs with more lines than Neovim's auxiliary stack can reference at once", function()
+            local row_count = 8100
+            local rows = {}
+
+            for i = 1, row_count do
+                rows[i] = {
+                    left = {
+                        content = "old line " .. i,
+                        is_filler = false,
+                        highlights = { { start = 0, ["end"] = -1 } },
+                    },
+                    right = {
+                        content = "new line " .. i,
+                        is_filler = false,
+                        highlights = { { start = 0, ["end"] = -1 } },
+                    },
+                }
+            end
+
+            local state = {
+                left_win = left_win,
+                left_buf = left_buf,
+                right_win = right_win,
+                right_buf = right_buf,
+            }
+            local file = {
+                path = "large.lua",
+                language = "Lua",
+                hunk_starts = { 0 },
+                rows = rows,
+            }
+
+            assert.has_no.errors(function()
+                diff.render(state, file)
+            end)
+            assert.equals(row_count, vim.api.nvim_buf_line_count(left_buf))
+            assert.equals(row_count, vim.api.nvim_buf_line_count(right_buf))
+        end)
     end)
 
     before_each(function()

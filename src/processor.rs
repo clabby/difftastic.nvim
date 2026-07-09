@@ -435,12 +435,11 @@ impl IntoLua for Side {
         table.set("content", self.content)?;
         table.set("is_filler", self.is_filler)?;
 
-        let highlights: Vec<LuaValue> = self
-            .highlights
-            .into_iter()
-            .map(|h| h.into_lua(lua))
-            .collect::<LuaResult<_>>()?;
-        table.set("highlights", lua.create_sequence_from(highlights)?)?;
+        let highlights = lua.create_table_with_capacity(self.highlights.len(), 0)?;
+        for (i, highlight) in self.highlights.into_iter().enumerate() {
+            highlights.set(i + 1, highlight.into_lua(lua)?)?;
+        }
+        table.set("highlights", highlights)?;
 
         Ok(LuaValue::Table(table))
     }
@@ -478,27 +477,26 @@ impl IntoLua for DisplayFile {
         table.set("additions", self.additions)?;
         table.set("deletions", self.deletions)?;
 
-        let rows: Vec<LuaValue> = self
-            .rows
-            .into_iter()
-            .map(|r| r.into_lua(lua))
-            .collect::<LuaResult<_>>()?;
-        table.set("rows", lua.create_sequence_from(rows)?)?;
+        let rows = lua.create_table_with_capacity(self.rows.len(), 0)?;
+        for (i, row) in self.rows.into_iter().enumerate() {
+            rows.set(i + 1, row.into_lua(lua)?)?;
+        }
+        table.set("rows", rows)?;
 
-        table.set("hunk_starts", lua.create_sequence_from(self.hunk_starts)?)?;
+        let hunk_starts = lua.create_table_with_capacity(self.hunk_starts.len(), 0)?;
+        for (i, hunk_start) in self.hunk_starts.into_iter().enumerate() {
+            hunk_starts.set(i + 1, hunk_start)?;
+        }
+        table.set("hunk_starts", hunk_starts)?;
 
-        // Serialize aligned_lines as array of [left, right] pairs (nil for None)
-        let aligned: Vec<LuaValue> = self
-            .aligned_lines
-            .into_iter()
-            .map(|(left, right)| {
-                let pair = lua.create_table()?;
-                pair.set(1, left)?;
-                pair.set(2, right)?;
-                Ok(LuaValue::Table(pair))
-            })
-            .collect::<LuaResult<_>>()?;
-        table.set("aligned_lines", lua.create_sequence_from(aligned)?)?;
+        let aligned_lines = lua.create_table_with_capacity(self.aligned_lines.len(), 0)?;
+        for (i, (left, right)) in self.aligned_lines.into_iter().enumerate() {
+            let pair = lua.create_table_with_capacity(2, 0)?;
+            pair.set(1, left)?;
+            pair.set(2, right)?;
+            aligned_lines.set(i + 1, pair)?;
+        }
+        table.set("aligned_lines", aligned_lines)?;
 
         Ok(LuaValue::Table(table))
     }

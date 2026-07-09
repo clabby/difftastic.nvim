@@ -10,18 +10,22 @@ if vim.fn.isdirectory(doc_dir) == 1 and vim.fn.filereadable(doc_dir .. "/tags") 
     pcall(vim.cmd.helptags, doc_dir)
 end
 
+local open_difft = vim.schedule_wrap(function(revset)
+    require("difftastic-nvim").open(revset)
+end)
+
 vim.api.nvim_create_user_command("Difft", function(opts)
     local args = opts.args
     if args == "" then
         -- No args: show unstaged changes
-        require("difftastic-nvim").open(nil)
+        open_difft(nil)
     elseif args == "--staged" then
         -- Show staged changes
-        require("difftastic-nvim").open("--staged")
+        open_difft("--staged")
     else
         -- Revset/commit range
         local revset = args:gsub("^['\"](.+)['\"]$", "%1")
-        require("difftastic-nvim").open(revset)
+        open_difft(revset)
     end
 end, {
     nargs = "?",
