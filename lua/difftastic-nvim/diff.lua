@@ -124,7 +124,7 @@ function M.render(state, file)
     -- Apply syntax highlighting based on mode
     local use_treesitter = config.highlight_mode ~= "difftastic"
     if use_treesitter then
-        local ft = FILETYPES[file.language]
+        local ft = FILETYPES[file.language] or vim.filetype.match({ filename = vim.fn.fnamemodify(file.path, ":t"), })
         if ft then
             ensure_treesitter(state.left_buf, ft)
             ensure_treesitter(state.right_buf, ft)
