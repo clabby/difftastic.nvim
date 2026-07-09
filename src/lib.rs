@@ -133,7 +133,11 @@ fn git_diff_stats(extra_args: &[&str]) -> FileStats {
         return HashMap::new();
     };
 
-    String::from_utf8_lossy(&output.stdout)
+    parse_git_numstat(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_git_numstat(output: &str) -> FileStats {
+    output
         .lines()
         .filter_map(|line| {
             let mut parts = line.split('\t');
@@ -143,46 +147,6 @@ fn git_diff_stats(extra_args: &[&str]) -> FileStats {
             Some((PathBuf::from(path), (add, del)))
         })
         .collect()
-}
-
-/// Gets diff stats for jj uncommitted changes.
-fn jj_diff_stats_uncommitted() -> FileStats {
-    // jj diff without -r shows uncommitted changes; use git for stats
-    // For uncommitted changes, we compare working copy to the current commit
-    let output = Command::new("jj").args(["diff", "--stat"]).output().ok();
-
-    // jj --stat output is different, so we just return empty for now
-    // The diff will still work, just without inline stats
-    let _ = output;
-    HashMap::new()
-}
-
-/// Translates a jj revset to a git commit hash.
-/// Uses `jj log -r <revset> --no-graph -T 'commit_id'`.
-fn jj_to_git_commit(revset: &str) -> Option<String> {
-    let output = Command::new("jj")
-        .args(["log", "-r", revset, "--no-graph", "-T", "commit_id"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let commits: Vec<_> = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect();
-
-    if commits.len() != 1 {
-        return None;
-    }
-
-    let commit = commits[0].to_string();
-    // Valid git commit hash is 40 hex characters
-    (commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit())).then_some(commit)
 }
 
 /// Parses a jj range of the form `A..B` into `(A, B)`.
@@ -196,26 +160,65 @@ fn parse_jj_range(revset: &str) -> Option<(String, String)> {
     Some((old.to_string(), new.to_string()))
 }
 
-/// Gets diff stats from jj by translating revsets to git commits.
-/// For colocated repos, uses `git diff --numstat` for accurate stats.
-fn jj_diff_stats(revset: &str) -> FileStats {
-    if let Some((old_rev, new_rev)) = parse_jj_range(revset) {
-        let old_commit = jj_to_git_commit(&old_rev);
-        let new_commit = jj_to_git_commit(&new_rev);
-        return match (old_commit, new_commit) {
-            (Some(old), Some(new)) => git_diff_stats(&[&format!("{old}..{new}")]),
-            _ => HashMap::new(),
-        };
+fn jj_git_commits(revset: &str) -> Option<Vec<String>> {
+    let output = Command::new("jj")
+        .args([
+            "log",
+            "-r",
+            revset,
+            "--no-graph",
+            "-T",
+            "commit_id ++ \"\n\"",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
     }
 
-    let old_commit = jj_to_git_commit(&format!("roots({revset})-"));
-    let new_commit = jj_to_git_commit(&format!("heads({revset})"));
+    let commits = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
 
-    match (old_commit, new_commit) {
-        (Some(old), Some(new)) => git_diff_stats(&[&format!("{old}..{new}")]),
-        (None, Some(new)) => git_diff_stats(&[&format!("{new}^..{new}")]),
-        _ => HashMap::new(),
+    commits
+        .iter()
+        .all(|commit| commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit()))
+        .then_some(commits)
+}
+
+fn jj_diff_revset(mode: &DiffMode) -> &str {
+    match mode {
+        DiffMode::Range(revset) => revset,
+        DiffMode::Unstaged | DiffMode::Staged => "@",
     }
+}
+
+fn git_range_from_jj_commits(old_revs: &[String], new_revs: &[String]) -> Option<String> {
+    if old_revs.len() != 1 || new_revs.len() != 1 {
+        return None;
+    }
+
+    Some(format!("{}..{}", old_revs[0], new_revs[0]))
+}
+
+fn jj_diff_git_range(mode: &DiffMode) -> Option<String> {
+    let revset = jj_diff_revset(mode);
+    let old_revs = jj_git_commits(&format!("roots({revset})-"))?;
+    let new_revs = jj_git_commits(&format!("heads({revset})"))?;
+
+    git_range_from_jj_commits(&old_revs, &new_revs)
+}
+
+fn jj_diff_stats(mode: &DiffMode) -> FileStats {
+    let Some(git_range) = jj_diff_git_range(mode) else {
+        return HashMap::new();
+    };
+
+    git_diff_stats(&[git_range.as_str()])
 }
 
 /// Runs difftastic via jj and parses the JSON output.
@@ -337,8 +340,12 @@ fn prepare_file_for_display(
     file: &mut difftastic::DifftFile,
     stats: &FileStats,
 ) -> (Option<(u32, u32)>, PathBuf, PathBuf, Option<PathBuf>) {
-    let file_stats = stats.get(&file.path).copied();
     let (old_path, new_path) = split_display_path(&file.path);
+    let file_stats = stats
+        .get(&file.path)
+        .or_else(|| stats.get(&new_path))
+        .or_else(|| stats.get(&old_path))
+        .copied();
 
     let moved_from = if old_path != new_path {
         file.path = new_path.clone();
@@ -490,7 +497,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
         }
         (DiffMode::Range(range), _) => {
             let files = run_jj_diff(range).map_err(LuaError::RuntimeError)?;
-            let stats = jj_diff_stats(range);
+            let stats = jj_diff_stats(&mode);
             (files, stats)
         }
         (DiffMode::Unstaged, "git") => {
@@ -500,7 +507,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
         }
         (DiffMode::Unstaged, _) => {
             let files = run_jj_diff_uncommitted().map_err(LuaError::RuntimeError)?;
-            let stats = jj_diff_stats_uncommitted();
+            let stats = jj_diff_stats(&mode);
             (files, stats)
         }
         (DiffMode::Staged, "git") => {
@@ -511,7 +518,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
         (DiffMode::Staged, _) => {
             // jj doesn't have a staging area concept, so show current revision
             let files = run_jj_diff("@").map_err(LuaError::RuntimeError)?;
-            let stats = jj_diff_stats("@");
+            let stats = jj_diff_stats(&mode);
             (files, stats)
         }
     };
@@ -711,6 +718,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_git_numstat() {
+        let stats = parse_git_numstat("3\t1\tsrc/lib.rs\n0\t2\tREADME.md\n");
+
+        assert_eq!(stats.get(Path::new("src/lib.rs")), Some(&(3, 1)));
+        assert_eq!(stats.get(Path::new("README.md")), Some(&(0, 2)));
+    }
+
+    #[test]
+    fn test_parse_git_numstat_skips_binary_files() {
+        let stats = parse_git_numstat("-\t-\timage.png\n1\t0\ttext.txt\n");
+
+        assert!(!stats.contains_key(Path::new("image.png")));
+        assert_eq!(stats.get(Path::new("text.txt")), Some(&(1, 0)));
+    }
+
+    #[test]
     fn test_parse_jj_range_double_dot() {
         let (old, new) = parse_jj_range("main@origin..@").unwrap();
         assert_eq!(old, "main@origin");
@@ -720,6 +743,56 @@ mod tests {
     #[test]
     fn test_parse_jj_range_non_range() {
         assert!(parse_jj_range("@").is_none());
+    }
+
+    #[test]
+    fn test_jj_diff_revset_uses_range_revset() {
+        let mode = DiffMode::Range("trunk()..@".to_string());
+        assert_eq!(jj_diff_revset(&mode), "trunk()..@");
+    }
+
+    #[test]
+    fn test_jj_diff_revset_uses_current_revision_for_unstaged() {
+        assert_eq!(jj_diff_revset(&DiffMode::Unstaged), "@");
+    }
+
+    #[test]
+    fn test_jj_diff_revset_uses_current_revision_for_staged_fallback() {
+        assert_eq!(jj_diff_revset(&DiffMode::Staged), "@");
+    }
+
+    #[test]
+    fn test_git_range_from_jj_commits_requires_one_old_and_one_new_commit() {
+        let old_revs = vec!["a".repeat(40)];
+        let new_revs = vec!["b".repeat(40)];
+
+        assert_eq!(
+            git_range_from_jj_commits(&old_revs, &new_revs),
+            Some(format!("{}..{}", old_revs[0], new_revs[0]))
+        );
+    }
+
+    #[test]
+    fn test_git_range_from_jj_commits_rejects_missing_old_commit() {
+        let new_revs = vec!["b".repeat(40)];
+
+        assert_eq!(git_range_from_jj_commits(&[], &new_revs), None);
+    }
+
+    #[test]
+    fn test_git_range_from_jj_commits_rejects_multiple_old_commits() {
+        let old_revs = vec!["a".repeat(40), "b".repeat(40)];
+        let new_revs = vec!["c".repeat(40)];
+
+        assert_eq!(git_range_from_jj_commits(&old_revs, &new_revs), None);
+    }
+
+    #[test]
+    fn test_git_range_from_jj_commits_rejects_multiple_new_commits() {
+        let old_revs = vec!["a".repeat(40)];
+        let new_revs = vec!["b".repeat(40), "c".repeat(40)];
+
+        assert_eq!(git_range_from_jj_commits(&old_revs, &new_revs), None);
     }
 
     #[test]
@@ -741,6 +814,28 @@ mod tests {
         let (old, new) = split_display_path(Path::new("src/{old => new}.rs"));
         assert_eq!(old, PathBuf::from("src/old.rs"));
         assert_eq!(new, PathBuf::from("src/new.rs"));
+    }
+
+    #[test]
+    fn test_prepare_file_for_display_finds_stats_for_split_display_path() {
+        let mut stats = HashMap::new();
+        stats.insert(PathBuf::from("src/new.rs"), (3, 2));
+
+        let mut file = difftastic::DifftFile {
+            path: PathBuf::from("src/{old => new}.rs"),
+            language: "Rust".to_string(),
+            status: difftastic::Status::Changed,
+            aligned_lines: Vec::new(),
+            chunks: Vec::new(),
+        };
+
+        let (file_stats, old_path, new_path, moved_from) =
+            prepare_file_for_display(&mut file, &stats);
+
+        assert_eq!(file_stats, Some((3, 2)));
+        assert_eq!(old_path, PathBuf::from("src/old.rs"));
+        assert_eq!(new_path, PathBuf::from("src/new.rs"));
+        assert_eq!(moved_from, Some(PathBuf::from("src/old.rs")));
     }
 
     #[test]
