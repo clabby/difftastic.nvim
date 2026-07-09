@@ -280,13 +280,16 @@ Tree options:
 
 Highlights automatically inherit from your colorscheme's semantic groups
 (`Added`, `Removed`, `Directory`, `Normal`) and update when you switch
-themes. Background colors are derived by blending the foreground color
-with your `Normal` background at 30% opacity.
+themes. Strong background colors are derived by blending the foreground
+color with your `Normal` background at 38% opacity. Line background colors
+use half of that opacity for a lighter full-line context.
 
 Treesitter mode (background colors):
     Group                 Default                 Description ~
     DifftAdded            Derived from `Added`    Added lines background
     DifftRemoved          Derived from `Removed`  Removed lines background
+    DifftAddedLine        Derived from `Added`    Lighter added line background
+    DifftRemovedLine      Derived from `Removed`  Lighter removed line background
 
 Difftastic mode (foreground colors):
     DifftAddedFg    `Added` + bold          Added text

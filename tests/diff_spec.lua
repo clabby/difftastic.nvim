@@ -5,6 +5,276 @@ describe("diff", function()
     local mock_win
     local mock_cursor_line
 
+    describe("render", function()
+        local left_win
+        local left_buf
+        local right_win
+        local right_buf
+
+        before_each(function()
+            package.loaded["difftastic-nvim"] = {
+                config = {
+                    highlight_mode = "treesitter",
+                },
+            }
+
+            vim.cmd("enew")
+            left_win = vim.api.nvim_get_current_win()
+            left_buf = vim.api.nvim_get_current_buf()
+
+            vim.cmd("vsplit")
+            right_win = vim.api.nvim_get_current_win()
+            right_buf = vim.api.nvim_get_current_buf()
+        end)
+
+        after_each(function()
+            vim.cmd("only")
+            pcall(vim.api.nvim_buf_delete, left_buf, { force = true })
+            pcall(vim.api.nvim_buf_delete, right_buf, { force = true })
+        end)
+
+        it("uses muted line highlights under stronger partial change highlights", function()
+            local state = {
+                left_win = left_win,
+                left_buf = left_buf,
+                right_win = right_win,
+                right_buf = right_buf,
+            }
+            local file = {
+                language = "Lua",
+                hunk_starts = { 0 },
+                rows = {
+                    {
+                        left = {
+                            content = "local old_value = 1",
+                            is_filler = false,
+                            highlights = { { start = 6, ["end"] = 15 } },
+                        },
+                        right = {
+                            content = "local new_value = 1",
+                            is_filler = false,
+                            highlights = { { start = 6, ["end"] = 15 } },
+                        },
+                    },
+                },
+            }
+
+            diff.render(state, file)
+
+            local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, -1, 0, -1, { details = true })
+            local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, -1, 0, -1, { details = true })
+            local has_removed_line = false
+            local has_added_line = false
+            local has_removed_range = false
+            local has_added_range = false
+
+            for _, mark in ipairs(left_marks) do
+                local col = mark[3]
+                local details = mark[4] or {}
+                if
+                    details.hl_group == "DifftRemovedLine"
+                    and col == 0
+                    and details.end_row == 1
+                    and details.end_col == 0
+                    and details.hl_eol
+                    and details.priority == 100
+                then
+                    has_removed_line = true
+                end
+                if
+                    details.hl_group == "DifftRemoved"
+                    and col == 6
+                    and details.end_col == 15
+                    and details.priority == 200
+                then
+                    has_removed_range = true
+                end
+            end
+
+            for _, mark in ipairs(right_marks) do
+                local col = mark[3]
+                local details = mark[4] or {}
+                if
+                    details.hl_group == "DifftAddedLine"
+                    and col == 0
+                    and details.end_row == 1
+                    and details.end_col == 0
+                    and details.hl_eol
+                    and details.priority == 100
+                then
+                    has_added_line = true
+                end
+                if
+                    details.hl_group == "DifftAdded"
+                    and col == 6
+                    and details.end_col == 15
+                    and details.priority == 200
+                then
+                    has_added_range = true
+                end
+            end
+
+            assert.is_true(has_removed_line)
+            assert.is_true(has_added_line)
+            assert.is_true(has_removed_range)
+            assert.is_true(has_added_range)
+        end)
+
+        it("uses muted line highlights for full-line changes", function()
+            local state = {
+                left_win = left_win,
+                left_buf = left_buf,
+                right_win = right_win,
+                right_buf = right_buf,
+            }
+            local file = {
+                language = "Lua",
+                hunk_starts = { 0 },
+                rows = {
+                    {
+                        left = {
+                            content = "old_value",
+                            is_filler = false,
+                            highlights = { { start = 0, ["end"] = -1 } },
+                        },
+                        right = {
+                            content = "new_value",
+                            is_filler = false,
+                            highlights = { { start = 0, ["end"] = -1 } },
+                        },
+                    },
+                },
+            }
+
+            diff.render(state, file)
+
+            local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, -1, 0, -1, { details = true })
+            local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, -1, 0, -1, { details = true })
+            local has_removed_line = false
+            local has_added_line = false
+            local has_removed_range = false
+            local has_added_range = false
+
+            for _, mark in ipairs(left_marks) do
+                local col = mark[3]
+                local details = mark[4] or {}
+                if
+                    details.hl_group == "DifftRemovedLine"
+                    and col == 0
+                    and details.end_row == 1
+                    and details.end_col == 0
+                    and details.hl_eol
+                    and details.priority == 100
+                then
+                    has_removed_line = true
+                end
+                if details.hl_group == "DifftRemoved" and details.priority == 200 then
+                    has_removed_range = true
+                end
+            end
+
+            for _, mark in ipairs(right_marks) do
+                local col = mark[3]
+                local details = mark[4] or {}
+                if
+                    details.hl_group == "DifftAddedLine"
+                    and col == 0
+                    and details.end_row == 1
+                    and details.end_col == 0
+                    and details.hl_eol
+                    and details.priority == 100
+                then
+                    has_added_line = true
+                end
+                if details.hl_group == "DifftAdded" and details.priority == 200 then
+                    has_added_range = true
+                end
+            end
+
+            assert.is_true(has_removed_line)
+            assert.is_true(has_added_line)
+            assert.is_false(has_removed_range)
+            assert.is_false(has_added_range)
+        end)
+
+        it("uses muted line highlights when every non-whitespace character changed", function()
+            local state = {
+                left_win = left_win,
+                left_buf = left_buf,
+                right_win = right_win,
+                right_buf = right_buf,
+            }
+            local file = {
+                language = "Lua",
+                hunk_starts = { 0 },
+                rows = {
+                    {
+                        left = {
+                            content = "foo bar",
+                            is_filler = false,
+                            highlights = { { start = 0, ["end"] = 3 }, { start = 4, ["end"] = 7 } },
+                        },
+                        right = {
+                            content = "baz qux",
+                            is_filler = false,
+                            highlights = { { start = 0, ["end"] = 3 }, { start = 4, ["end"] = 7 } },
+                        },
+                    },
+                },
+            }
+
+            diff.render(state, file)
+
+            local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, -1, 0, -1, { details = true })
+            local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, -1, 0, -1, { details = true })
+            local has_removed_line = false
+            local has_added_line = false
+            local has_removed_range = false
+            local has_added_range = false
+
+            for _, mark in ipairs(left_marks) do
+                local col = mark[3]
+                local details = mark[4] or {}
+                if
+                    details.hl_group == "DifftRemovedLine"
+                    and col == 0
+                    and details.end_row == 1
+                    and details.end_col == 0
+                    and details.hl_eol
+                    and details.priority == 100
+                then
+                    has_removed_line = true
+                end
+                if details.hl_group == "DifftRemoved" and details.priority == 200 then
+                    has_removed_range = true
+                end
+            end
+
+            for _, mark in ipairs(right_marks) do
+                local col = mark[3]
+                local details = mark[4] or {}
+                if
+                    details.hl_group == "DifftAddedLine"
+                    and col == 0
+                    and details.end_row == 1
+                    and details.end_col == 0
+                    and details.hl_eol
+                    and details.priority == 100
+                then
+                    has_added_line = true
+                end
+                if details.hl_group == "DifftAdded" and details.priority == 200 then
+                    has_added_range = true
+                end
+            end
+
+            assert.is_true(has_removed_line)
+            assert.is_true(has_added_line)
+            assert.is_false(has_removed_range)
+            assert.is_false(has_added_range)
+        end)
+    end)
+
     before_each(function()
         -- Reset hunk positions
         diff.hunk_positions = {}

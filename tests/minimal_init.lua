@@ -2,6 +2,7 @@
 -- Add plugin to runtime path
 local plugin_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h")
 vim.opt.rtp:prepend(plugin_root)
+vim.opt.swapfile = false
 
 -- Try to load plenary if available
 local ok, _ = pcall(require, "plenary")

@@ -49,6 +49,13 @@ pub struct HighlightRegion {
 }
 
 impl HighlightRegion {
+    /// Creates a highlight region for the full display line.
+    #[inline]
+    #[must_use]
+    fn full_line() -> Self {
+        Self { start: 0, end: -1 }
+    }
+
     /// Creates a highlight region for a specific column range.
     #[inline]
     #[must_use]
@@ -112,8 +119,11 @@ impl Side {
     #[inline]
     #[must_use]
     fn with_full_highlight(content: String) -> Self {
-        let hl = non_whitespace_span(&content);
-        Self::new(content, false, smallvec::smallvec![hl])
+        Self::new(
+            content,
+            false,
+            smallvec::smallvec![HighlightRegion::full_line()],
+        )
     }
 }
 
@@ -210,7 +220,7 @@ fn process_created(
         .into_iter()
         .map(|line| Row {
             left: Side::filler(),
-            right: Side::new(line, false, Highlights::new()),
+            right: Side::with_full_highlight(line),
         })
         .collect();
 
@@ -379,111 +389,35 @@ fn process_changed(
 
 /// Computes highlight regions for a line based on its changes.
 ///
-/// Implements several optimizations for cleaner visual presentation:
-/// - Single spanning change → full-line highlight
-/// - Adjacent regions separated by whitespace → merged
-/// - All non-whitespace covered → full-line highlight
-/// - No changes → empty (no highlighting)
-fn compute_highlights(content: &str, changes: &[Change]) -> Highlights {
+/// Difftastic's JSON output reports the structural diff spans as `changes`.
+/// Preserve those spans; the renderer adds muted line context separately.
+fn compute_highlights(_content: &str, changes: &[Change]) -> Highlights {
     if changes.is_empty() {
         return Highlights::new();
     }
 
-    // If a single change covers the entire line, highlight from first to last non-whitespace
-    let len = content.len() as u32;
-    if changes.len() == 1 && changes[0].start == 0 && changes[0].end >= len {
-        return smallvec::smallvec![non_whitespace_span(content)];
-    }
-
-    // Sort and merge adjacent regions (merging across whitespace gaps)
     let mut regions: SmallVec<[(u32, u32); 4]> = changes.iter().map(|c| (c.start, c.end)).collect();
     regions.sort_unstable_by_key(|r| r.0);
-    let merged = merge_regions(&regions, content.as_bytes());
-
-    // If merged regions cover all non-whitespace, highlight from first to last non-whitespace
-    if covers_all_non_whitespace(content, &merged) {
-        return smallvec::smallvec![non_whitespace_span(content)];
-    }
-
-    // Return the individual regions
-    merged
+    merge_overlapping_regions(&regions)
         .into_iter()
         .map(|(start, end)| HighlightRegion::columns(start, end))
         .collect()
 }
 
-/// Returns a highlight spanning from the first to last non-whitespace character.
-fn non_whitespace_span(content: &str) -> HighlightRegion {
-    let first = content
-        .bytes()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(0) as u32;
-    let last = content.len() as u32
-        - content
-            .bytes()
-            .rev()
-            .position(|b| !b.is_ascii_whitespace())
-            .unwrap_or(0) as u32;
-    HighlightRegion::columns(first, last)
-}
-
-/// Merges adjacent change regions, bridging gaps that contain only whitespace.
-///
-/// Creates cleaner visual output by combining regions like `[0-3], [4-7]`
-/// into `[0-7]` when the gap contains only whitespace.
-fn merge_regions(regions: &[(u32, u32)], bytes: &[u8]) -> SmallVec<[(u32, u32); 4]> {
+fn merge_overlapping_regions(regions: &[(u32, u32)]) -> SmallVec<[(u32, u32); 4]> {
     let mut merged: SmallVec<[(u32, u32); 4]> = SmallVec::with_capacity(regions.len());
 
     for &(start, end) in regions {
-        if let Some((_, last_end)) = merged.last_mut() {
-            let gap_start = *last_end as usize;
-            let gap_end = start as usize;
-
-            // Merge if regions overlap/touch or if the gap is only whitespace
-            if gap_start >= gap_end || is_whitespace_only(bytes, gap_start, gap_end) {
-                *last_end = (*last_end).max(end);
-                continue;
-            }
+        if let Some((_, last_end)) = merged.last_mut()
+            && *last_end >= start
+        {
+            *last_end = (*last_end).max(end);
+            continue;
         }
         merged.push((start, end));
     }
 
     merged
-}
-
-/// Checks if a byte range contains only ASCII whitespace.
-///
-/// Returns `true` if the range is empty or contains only spaces, tabs, etc.
-#[inline]
-fn is_whitespace_only(bytes: &[u8], start: usize, end: usize) -> bool {
-    bytes
-        .get(start..end)
-        .is_some_and(|slice| slice.iter().all(u8::is_ascii_whitespace))
-}
-
-/// Checks if the regions cover all non-whitespace characters in the line.
-///
-/// Used to determine if we should use a full-line highlight instead of
-/// multiple partial regions. Avoids intermediate allocation by checking
-/// positions as we iterate.
-fn covers_all_non_whitespace(line: &str, regions: &[(u32, u32)]) -> bool {
-    let mut has_non_ws = false;
-
-    for (i, c) in line.char_indices() {
-        if !c.is_whitespace() {
-            has_non_ws = true;
-            let pos = i as u32;
-            // Check if this position is covered by any region
-            if !regions
-                .iter()
-                .any(|(start, end)| pos >= *start && pos < *end)
-            {
-                return false;
-            }
-        }
-    }
-
-    has_non_ws
 }
 
 impl IntoLua for HighlightRegion {
@@ -608,7 +542,9 @@ mod tests {
         assert!(result.rows[0].left.is_filler);
         assert_eq!(result.rows[0].right.content, "a");
         assert!(!result.rows[0].right.is_filler);
-        assert!(result.rows[0].right.highlights.is_empty());
+        assert_eq!(result.rows[0].right.highlights.len(), 1);
+        assert_eq!(result.rows[0].right.highlights[0].start, 0);
+        assert_eq!(result.rows[0].right.highlights[0].end, -1);
         assert_eq!(result.additions, 2);
         assert_eq!(result.deletions, 0);
     }
@@ -716,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn highlight_full_coverage_spans_non_whitespace() {
+    fn highlight_full_coverage_preserves_span() {
         let highlights = compute_highlights("hello", &[change(0, 5)]);
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].start, 0);
@@ -724,11 +660,11 @@ mod tests {
     }
 
     #[test]
-    fn highlight_full_coverage_with_indent() {
+    fn highlight_full_coverage_with_indent_preserves_span() {
         let highlights = compute_highlights("  hello  ", &[change(0, 9)]);
         assert_eq!(highlights.len(), 1);
-        assert_eq!(highlights[0].start, 2);
-        assert_eq!(highlights[0].end, 7);
+        assert_eq!(highlights[0].start, 0);
+        assert_eq!(highlights[0].end, 9);
     }
 
     #[test]
@@ -739,11 +675,41 @@ mod tests {
     }
 
     #[test]
-    fn highlight_merges_across_whitespace() {
+    fn highlight_all_non_whitespace_across_spans_preserves_spans() {
         let highlights = compute_highlights("foo bar", &[change(0, 3), change(4, 7)]);
-        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights.len(), 2);
         assert_eq!(highlights[0].start, 0);
-        assert_eq!(highlights[0].end, 7); // merged to span all non-whitespace
+        assert_eq!(highlights[0].end, 3);
+        assert_eq!(highlights[1].start, 4);
+        assert_eq!(highlights[1].end, 7);
+    }
+
+    #[test]
+    fn highlight_all_non_whitespace_with_indent_preserves_spans() {
+        let highlights = compute_highlights("  foo bar  ", &[change(2, 5), change(6, 9)]);
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0].start, 2);
+        assert_eq!(highlights[0].end, 5);
+        assert_eq!(highlights[1].start, 6);
+        assert_eq!(highlights[1].end, 9);
+    }
+
+    #[test]
+    fn highlight_partial_spans_do_not_merge_across_whitespace() {
+        let highlights = compute_highlights("foo bar baz", &[change(0, 3), change(4, 7)]);
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0].start, 0);
+        assert_eq!(highlights[0].end, 3);
+        assert_eq!(highlights[1].start, 4);
+        assert_eq!(highlights[1].end, 7);
+    }
+
+    #[test]
+    fn highlight_numeric_literal_change_preserves_literal_span() {
+        let highlights = compute_highlights("M.bg_opacity = 0.38", &[change(15, 19)]);
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, 15);
+        assert_eq!(highlights[0].end, 19);
     }
 
     #[test]

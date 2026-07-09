@@ -2,7 +2,8 @@
 local M = {}
 
 --- Default opacity for background highlights (0-1)
-M.bg_opacity = 0.3
+M.bg_opacity = 0.38
+M.line_bg_opacity = M.bg_opacity * 0.5
 
 --- Blend two colors with a given alpha.
 --- @param fg string Foreground hex color (e.g., "#ff0000")
@@ -80,12 +81,16 @@ local function apply_highlights(overrides)
 
     local added_bg = blend(added_fg, normal_bg, M.bg_opacity)
     local removed_bg = blend(removed_fg, normal_bg, M.bg_opacity)
+    local added_line_bg = blend(added_fg, normal_bg, M.line_bg_opacity)
+    local removed_line_bg = blend(removed_fg, normal_bg, M.line_bg_opacity)
     local normal_blend = blend(normal_fg, normal_bg, M.bg_opacity)
 
     local derived = {
         -- Background highlights (blended from fg colors)
         DifftAdded = { bg = added_bg },
         DifftRemoved = { bg = removed_bg },
+        DifftAddedLine = { bg = added_line_bg },
+        DifftRemovedLine = { bg = removed_line_bg },
         DifftTreeCurrent = { bg = normal_blend, bold = true },
         DifftPickerPreviewHover = { bg = normal_blend, bold = true },
         DifftPickerJjDesc = { fg = normal_fg },
@@ -109,9 +114,16 @@ function M.setup(overrides)
     -- Apply highlights now
     apply_highlights(overrides)
 
-    -- Reapply on colorscheme change
+    -- Reapply when the colorscheme or background mode changes
     vim.api.nvim_create_autocmd("ColorScheme", {
         group = vim.api.nvim_create_augroup("DifftHighlights", { clear = true }),
+        callback = function()
+            apply_highlights(overrides)
+        end,
+    })
+    vim.api.nvim_create_autocmd("OptionSet", {
+        group = vim.api.nvim_create_augroup("DifftHighlightOptions", { clear = true }),
+        pattern = "background",
         callback = function()
             apply_highlights(overrides)
         end,
