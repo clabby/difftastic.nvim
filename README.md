@@ -27,23 +27,6 @@ view with syntax highlighting.
 - Rust toolchain (only if building from source)
 - [snacks.nvim](https://github.com/folke/snacks.nvim) (optional, only for `:DifftPick`)
 
-> [!WARNING]
->
-> This plugin requires difftastic with `aligned_lines` support in JSON output. This feature is available in
-> `main`, though hasn't yet landed in a release.
->
-> To build `difftastic` from source:
-> ```sh
-> # Clone with 'jj'
-> jj git clone git@github.com:Wilfred/difftastic.git --colocate
->
-> # Or, clone with 'git'
-> git clone git@github.com:Wilfred/difftastic.git
->
-> # Install 'difft' with the 'aligned_lines' feature
-> cd difftastic && cargo install --path .
-> ```
-
 ### lazy.nvim (recommended)
 
 ```lua
