@@ -184,6 +184,20 @@ The `highlight_mode` option controls how syntax highlighting is applied:
 - **`treesitter`** (default): Full syntax highlighting via Neovim's treesitter. Changes are shown with background colors.
 - **`difftastic`**: Minimal highlighting like the CLI. No syntax colors; changes are shown with foreground colors (green/red) to make diffs more prominent.
 
+### Trackpad Scrolling
+
+The panes scroll together vertically but not horizontally, because `'scrollbind'` only syncs the
+axes listed in `'scrollopt'` and the default is `ver,jump`. With a trackpad, a sideways swipe moves
+one pane alone. Add `hor` to `'scrollopt'` in your config to fix it:
+
+```lua
+vim.opt.scrollopt:append("hor")
+```
+
+```vim
+set scrollopt+=hor
+```
+
 ## Highlight Groups
 
 Highlights automatically inherit from your colorscheme's semantic groups (`Added`, `Removed`, `Directory`, `Normal`) and update when you switch themes. Strong background colors are derived by blending the foreground color with your `Normal` background at 38% opacity. Line background colors use half of that opacity for a lighter full-line context.
