@@ -41,6 +41,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 mod difftastic;
 mod processor;
@@ -143,8 +144,10 @@ fn parse_git_numstat(output: &str) -> FileStats {
             let mut parts = line.split('\t');
             let add = parts.next()?.parse().ok()?;
             let del = parts.next()?.parse().ok()?;
-            let path = parts.next()?;
-            Some((PathBuf::from(path), (add, del)))
+            // A rename is reported as `old => new` (or `dir/{old => new}`); key it by
+            // the new path, which is the path the diff records carry.
+            let (_, new_path) = split_display_path(Path::new(parts.next()?));
+            Some((new_path, (add, del)))
         })
         .collect()
 }
@@ -259,6 +262,61 @@ fn run_jj_diff_uncommitted() -> Result<Vec<difftastic::DifftFile>, String> {
         .map_err(|e| format!("Failed to parse difftastic JSON: {e}"))
 }
 
+/// Runs difftastic on two contents of one file and returns its entry for `path`.
+///
+/// The contents are written to two temporary files named like `path`, so difft
+/// detects the same language as for the original file.
+fn run_difft_on_contents(path: &Path, old: &str, new: &str) -> Option<difftastic::DifftFile> {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("difftastic-nvim-{}-{id}", std::process::id()));
+    let name = path.file_name()?;
+    let old_file = dir.join("old").join(name);
+    let new_file = dir.join("new").join(name);
+
+    let run = || -> Option<difftastic::DifftFile> {
+        std::fs::create_dir_all(old_file.parent()?).ok()?;
+        std::fs::create_dir_all(new_file.parent()?).ok()?;
+        std::fs::write(&old_file, old).ok()?;
+        std::fs::write(&new_file, new).ok()?;
+        let output = Command::new("difft")
+            .arg(&old_file)
+            .arg(&new_file)
+            .env("DFT_DISPLAY", "json")
+            .env("DFT_UNSTABLE", "yes")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        let mut file = difftastic::parse(&String::from_utf8_lossy(&output.stdout))
+            .ok()?
+            .into_iter()
+            .next()?;
+        file.path = path.to_path_buf();
+        Some(file)
+    };
+    let file = run();
+    let _ = std::fs::remove_dir_all(&dir);
+    file
+}
+
+/// jj hands difft whole trees, so a renamed file arrives as a creation of its new
+/// path that was never compared with the old one. Diffs the two contents instead;
+/// keeps the entry as is when that fails.
+fn pair_jj_rename(
+    file: difftastic::DifftFile,
+    renames: &HashMap<PathBuf, PathBuf>,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> difftastic::DifftFile {
+    if file.status != difftastic::Status::Created || !renames.contains_key(&file.path) {
+        return file;
+    }
+    let (Some(old), Some(new)) = (old, new) else {
+        return file;
+    };
+    run_difft_on_contents(&file.path, old, new).unwrap_or(file)
+}
+
 /// Runs difftastic via git and parses the JSON output.
 /// Executes `git diff` with difftastic as the external diff tool.
 ///
@@ -339,6 +397,7 @@ fn split_display_path(path: &Path) -> (PathBuf, PathBuf) {
 fn prepare_file_for_display(
     file: &mut difftastic::DifftFile,
     stats: &FileStats,
+    renames: &HashMap<PathBuf, PathBuf>,
 ) -> (Option<(u32, u32)>, PathBuf, PathBuf, Option<PathBuf>) {
     let (old_path, new_path) = split_display_path(&file.path);
     let file_stats = stats
@@ -353,6 +412,15 @@ fn prepare_file_for_display(
         Some(old_path.clone())
     } else {
         None
+    };
+
+    // A renamed file is reported under its new path only, yet diffed against the old
+    // file (by git, or by `pair_jj_rename` for jj), so load the old content from the
+    // rename source. The status is left as the diff reported it, so the rows are
+    // built as a change, not as a creation.
+    let old_path = match (&moved_from, renames.get(&new_path)) {
+        (None, Some(renamed_from)) => renamed_from.clone(),
+        _ => old_path,
     };
 
     (file_stats, old_path, new_path, moved_from)
@@ -408,21 +476,34 @@ fn parse_git_name_status_renames(output: &str) -> HashMap<PathBuf, PathBuf> {
         .collect()
 }
 
-fn git_rename_map(mode: &DiffMode) -> HashMap<PathBuf, PathBuf> {
-    let mut cmd = Command::new("git");
-    cmd.args(["diff", "--name-status", "-M"]);
+/// Arguments for `git diff` that select the same sides as the content diff.
+fn git_rename_args(mode: &DiffMode) -> Vec<String> {
+    let mut args: Vec<String> = ["diff", "--name-status", "-M"].map(String::from).into();
 
     match mode {
         DiffMode::Range(range) => {
-            cmd.arg(range);
+            // The rename map decides where a renamed file's old content is read from,
+            // so it must compare the same two sides as the content diff. Given a
+            // bare revision, `git diff` compares it with the working tree: it would
+            // miss the renames made in that revision and report unrelated
+            // working-tree renames. Resolve it like the content diff, as `rev^..rev`.
+            let (old_ref, new_ref) = parse_git_range(range);
+            args.push(format!("{old_ref}..{new_ref}"));
         }
         DiffMode::Unstaged => {}
         DiffMode::Staged => {
-            cmd.arg("--cached");
+            args.push("--cached".to_string());
         }
     }
 
-    let output = cmd.output().ok();
+    args
+}
+
+fn git_rename_map(mode: &DiffMode) -> HashMap<PathBuf, PathBuf> {
+    let output = Command::new("git")
+        .args(git_rename_args(mode))
+        .output()
+        .ok();
     let Some(output) = output.filter(|o| o.status.success()) else {
         return HashMap::new();
     };
@@ -527,6 +608,13 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
     // are repo-root-relative, but jj file show resolves relative to CWD).
     let vcs_root = if vcs != "git" { jj_root() } else { git_root() };
 
+    // Needed before content lookup: a renamed file's old content lives at its old path.
+    let renames = if vcs == "git" {
+        git_rename_map(&mode)
+    } else {
+        jj_rename_map(&mode)
+    };
+
     // Process files based on mode and VCS
     let mut display_files: Vec<_> = match (&mode, vcs) {
         (DiffMode::Range(range), "git") => {
@@ -535,7 +623,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .into_par_iter()
                 .map(|mut file| {
                     let (file_stats, old_path, new_path, moved_from) =
-                        prepare_file_for_display(&mut file, &stats);
+                        prepare_file_for_display(&mut file, &stats, &renames);
                     let old_lines = into_lines(git_file_content(&old_ref, &old_path));
                     let new_lines = into_lines(git_file_content(&new_ref, &new_path));
                     process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
@@ -550,9 +638,11 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .into_par_iter()
                 .map(|mut file| {
                     let (file_stats, old_path, new_path, moved_from) =
-                        prepare_file_for_display(&mut file, &stats);
-                    let old_lines = into_lines(jj_file_content(root, &old_ref, &old_path));
-                    let new_lines = into_lines(jj_file_content(root, &new_ref, &new_path));
+                        prepare_file_for_display(&mut file, &stats, &renames);
+                    let old = jj_file_content(root, &old_ref, &old_path);
+                    let new = jj_file_content(root, &new_ref, &new_path);
+                    let file = pair_jj_rename(file, &renames, old.as_deref(), new.as_deref());
+                    let (old_lines, new_lines) = (into_lines(old), into_lines(new));
                     process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
                 })
                 .collect()
@@ -561,7 +651,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .into_par_iter()
             .map(|mut file| {
                 let (file_stats, old_path, new_path, moved_from) =
-                    prepare_file_for_display(&mut file, &stats);
+                    prepare_file_for_display(&mut file, &stats, &renames);
                 let old_lines = into_lines(git_index_content(&old_path));
                 let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "git"));
                 process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
@@ -573,9 +663,11 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .into_par_iter()
                 .map(|mut file| {
                     let (file_stats, old_path, new_path, moved_from) =
-                        prepare_file_for_display(&mut file, &stats);
-                    let old_lines = into_lines(jj_file_content(root, "@-", &old_path));
-                    let new_lines = into_lines(working_tree_content_for_vcs(&new_path, "jj"));
+                        prepare_file_for_display(&mut file, &stats, &renames);
+                    let old = jj_file_content(root, "@-", &old_path);
+                    let new = working_tree_content_for_vcs(&new_path, "jj");
+                    let file = pair_jj_rename(file, &renames, old.as_deref(), new.as_deref());
+                    let (old_lines, new_lines) = (into_lines(old), into_lines(new));
                     process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
                 })
                 .collect()
@@ -584,7 +676,7 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
             .into_par_iter()
             .map(|mut file| {
                 let (file_stats, old_path, new_path, moved_from) =
-                    prepare_file_for_display(&mut file, &stats);
+                    prepare_file_for_display(&mut file, &stats, &renames);
                 let old_lines = into_lines(git_file_content("HEAD", &old_path));
                 let new_lines = into_lines(git_index_content(&new_path));
                 process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
@@ -596,20 +688,17 @@ fn run_diff_impl(lua: &Lua, mode: DiffMode, vcs: &str) -> LuaResult<LuaTable> {
                 .into_par_iter()
                 .map(|mut file| {
                     let (file_stats, old_path, new_path, moved_from) =
-                        prepare_file_for_display(&mut file, &stats);
-                    let old_lines = into_lines(jj_file_content(root, "@-", &old_path));
-                    let new_lines = into_lines(jj_file_content(root, "@", &new_path));
+                        prepare_file_for_display(&mut file, &stats, &renames);
+                    let old = jj_file_content(root, "@-", &old_path);
+                    let new = jj_file_content(root, "@", &new_path);
+                    let file = pair_jj_rename(file, &renames, old.as_deref(), new.as_deref());
+                    let (old_lines, new_lines) = (into_lines(old), into_lines(new));
                     process_prepared_file(file, old_lines, new_lines, file_stats, moved_from)
                 })
                 .collect()
         }
     };
 
-    let renames = if vcs == "git" {
-        git_rename_map(&mode)
-    } else {
-        jj_rename_map(&mode)
-    };
     if !renames.is_empty() {
         let old_paths: HashSet<PathBuf> = renames.values().cloned().collect();
 
@@ -726,6 +815,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_git_numstat_keys_renames_by_new_path() {
+        let stats = parse_git_numstat("1\t1\told.rs => sub/new.rs\n2\t0\tsrc/{a => b}.rs\n");
+
+        assert_eq!(stats.get(Path::new("sub/new.rs")), Some(&(1, 1)));
+        assert_eq!(stats.get(Path::new("src/b.rs")), Some(&(2, 0)));
+    }
+
+    #[test]
     fn test_parse_git_numstat_skips_binary_files() {
         let stats = parse_git_numstat("-\t-\timage.png\n1\t0\ttext.txt\n");
 
@@ -830,12 +927,43 @@ mod tests {
         };
 
         let (file_stats, old_path, new_path, moved_from) =
-            prepare_file_for_display(&mut file, &stats);
+            prepare_file_for_display(&mut file, &stats, &HashMap::new());
 
         assert_eq!(file_stats, Some((3, 2)));
         assert_eq!(old_path, PathBuf::from("src/old.rs"));
         assert_eq!(new_path, PathBuf::from("src/new.rs"));
         assert_eq!(moved_from, Some(PathBuf::from("src/old.rs")));
+    }
+
+    #[test]
+    fn test_prepare_file_for_display_takes_old_path_from_rename_map() {
+        let mut renames = HashMap::new();
+        renames.insert(PathBuf::from("src/new.rs"), PathBuf::from("src/old.rs"));
+
+        let mut file = difftastic::DifftFile {
+            path: PathBuf::from("src/new.rs"),
+            language: "Rust".to_string(),
+            status: difftastic::Status::Changed,
+            aligned_lines: Vec::new(),
+            chunks: Vec::new(),
+        };
+
+        let (_, old_path, new_path, _) =
+            prepare_file_for_display(&mut file, &HashMap::new(), &renames);
+
+        assert_eq!(old_path, PathBuf::from("src/old.rs"));
+        assert_eq!(new_path, PathBuf::from("src/new.rs"));
+        // Rows must be built as a change against the old content, not as a creation.
+        assert_eq!(file.status, difftastic::Status::Changed);
+    }
+
+    #[test]
+    fn test_git_rename_args_resolve_single_revision_like_content_diff() {
+        let args = git_rename_args(&DiffMode::Range("HEAD".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("HEAD^..HEAD"));
+
+        let args = git_rename_args(&DiffMode::Range("a..b".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("a..b"));
     }
 
     #[test]
@@ -877,5 +1005,112 @@ mod tests {
             Some(&PathBuf::from("a.txt"))
         );
         assert!(!renames.contains_key(Path::new("c.txt")));
+    }
+
+    #[test]
+    fn test_parse_jj_summary_renames_brace_forms() {
+        let renames = parse_jj_summary_renames(
+            "R {a.txt => b.txt}\nR dir/{old.txt => new.txt}\nR {mv.txt => sub/mv.txt}\n",
+        );
+        assert_eq!(
+            renames.get(Path::new("b.txt")),
+            Some(&PathBuf::from("a.txt"))
+        );
+        assert_eq!(
+            renames.get(Path::new("dir/new.txt")),
+            Some(&PathBuf::from("dir/old.txt"))
+        );
+        assert_eq!(
+            renames.get(Path::new("sub/mv.txt")),
+            Some(&PathBuf::from("mv.txt"))
+        );
+    }
+
+    #[test]
+    fn test_parse_jj_summary_renames_ignores_copies() {
+        let renames = parse_jj_summary_renames("C {orig.txt => copy.txt}\nM orig.txt\n");
+        assert!(renames.is_empty());
+    }
+
+    fn created(path: &str) -> difftastic::DifftFile {
+        difftastic::DifftFile {
+            path: PathBuf::from(path),
+            language: "Text".to_string(),
+            status: difftastic::Status::Created,
+            aligned_lines: Vec::new(),
+            chunks: Vec::new(),
+        }
+    }
+
+    fn has_difft() -> bool {
+        Command::new("difft").arg("--version").output().is_ok()
+    }
+
+    #[test]
+    fn test_pair_jj_rename_keeps_entries_that_are_not_renames() {
+        let mut renames = HashMap::new();
+        renames.insert(PathBuf::from("b.txt"), PathBuf::from("a.txt"));
+
+        let added = created("other.txt");
+        assert_eq!(
+            pair_jj_rename(added.clone(), &renames, None, Some("x\n")),
+            added
+        );
+
+        let mut changed = created("b.txt");
+        changed.status = difftastic::Status::Changed;
+        assert_eq!(
+            pair_jj_rename(changed.clone(), &renames, Some("x\n"), Some("y\n")),
+            changed
+        );
+    }
+
+    #[test]
+    fn test_pair_jj_rename_keeps_entry_without_old_content() {
+        let mut renames = HashMap::new();
+        renames.insert(PathBuf::from("b.txt"), PathBuf::from("a.txt"));
+
+        let file = created("b.txt");
+        assert_eq!(
+            pair_jj_rename(file.clone(), &renames, None, Some("x\n")),
+            file
+        );
+    }
+
+    #[test]
+    fn test_pair_jj_rename_diffs_edited_rename() {
+        if !has_difft() {
+            return;
+        }
+        let mut renames = HashMap::new();
+        renames.insert(PathBuf::from("src/new.rs"), PathBuf::from("src/old.rs"));
+
+        let file = pair_jj_rename(
+            created("src/new.rs"),
+            &renames,
+            Some("fn a() {}\nfn b() {}\n"),
+            Some("fn a() {}\nfn c() {}\n"),
+        );
+
+        assert_eq!(file.path, PathBuf::from("src/new.rs"));
+        assert_eq!(file.status, difftastic::Status::Changed);
+        assert_eq!(file.language, "Rust");
+        assert!(!file.chunks.is_empty());
+        assert!(!file.aligned_lines.is_empty());
+    }
+
+    #[test]
+    fn test_pair_jj_rename_reports_pure_rename_as_unchanged() {
+        if !has_difft() {
+            return;
+        }
+        let mut renames = HashMap::new();
+        renames.insert(PathBuf::from("b.txt"), PathBuf::from("a.txt"));
+
+        let file = pair_jj_rename(created("b.txt"), &renames, Some("x\ny\n"), Some("x\ny\n"));
+
+        assert_eq!(file.path, PathBuf::from("b.txt"));
+        assert_eq!(file.status, difftastic::Status::Unchanged);
+        assert!(file.chunks.is_empty());
     }
 }

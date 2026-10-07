@@ -318,11 +318,19 @@ fn extract_changes(
 /// properly aligned rows. Computes highlights based on the change
 /// information in the chunks.
 fn process_changed(
-    file: DifftFile,
+    mut file: DifftFile,
     old_lines: &[String],
     new_lines: &[String],
     stats: Option<(u32, u32)>,
 ) -> DisplayFile {
+    // Identical content (a pure rename) comes without alignment; align it line by
+    // line so the file is shown instead of an empty view.
+    if file.aligned_lines.is_empty() && !old_lines.is_empty() && old_lines == new_lines {
+        file.aligned_lines = (0..old_lines.len() as u32)
+            .map(|i| (Some(i), Some(i)))
+            .collect();
+    }
+
     let (lhs_changes, rhs_changes) = extract_changes(&file.chunks);
     let num_rows = file.aligned_lines.len();
 
@@ -590,6 +598,25 @@ mod tests {
         assert_eq!(result.rows[1].right.content, "foobar");
         assert!(!result.rows[1].left.highlights.is_empty());
         assert!(!result.rows[1].right.highlights.is_empty());
+    }
+
+    #[test]
+    fn identical_content_without_alignment_shows_all_lines() {
+        let file = DifftFile {
+            path: "renamed.rs".into(),
+            language: "Rust".into(),
+            status: Status::Unchanged,
+            aligned_lines: Vec::new(),
+            chunks: Vec::new(),
+        };
+        let lines: Vec<String> = vec!["a".into(), "b".into()];
+        let result = process_file(file, lines.clone(), lines, None);
+
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[1].left.content, "b");
+        assert_eq!(result.rows[1].right.content, "b");
+        assert!(!result.rows[1].left.is_filler);
+        assert!(result.hunk_starts.is_empty());
     }
 
     #[test]
